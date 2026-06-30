@@ -40,6 +40,8 @@ PROCESSED_DIR = get_processed_upload_dir()
 TRACE_DIR = get_trace_store_dir()
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 STAGED_UPLOAD_CLEANUP_INTERVAL_SEC = 600
+CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS = 180
+DIRECT_IMPORT_RAW_NAME_MAX_CHARS = 180
 _last_staged_cleanup_ts = 0.0
 
 
@@ -75,6 +77,20 @@ def _safe_store_name(store_name: str) -> str:
     return safe_name
 
 
+def _bounded_direct_import_raw_name(safe_name: str) -> str:
+    if len(safe_name) <= DIRECT_IMPORT_RAW_NAME_MAX_CHARS:
+        return safe_name
+
+    path = Path(safe_name)
+    suffix = path.suffix
+    if len(suffix) >= DIRECT_IMPORT_RAW_NAME_MAX_CHARS:
+        suffix = ''
+    stem_limit = DIRECT_IMPORT_RAW_NAME_MAX_CHARS - len(suffix)
+    stem = path.stem or 'segy'
+    stem = stem[:stem_limit] or 'segy'
+    return _safe_upload_name(f'{stem}{suffix}')
+
+
 def _content_addressed_compare_store_name(
     *,
     safe_name: str,
@@ -85,8 +101,13 @@ def _content_addressed_compare_store_name(
     source_hash = source_sha256.lower()
     if not re.fullmatch(r'[0-9a-f]{64}', source_hash):
         raise HTTPException(status_code=400, detail='Source sha256 is invalid')
-    safe_stem = _safe_upload_name(Path(safe_name).stem)
-    store_name = f'{safe_stem}__k{key1_byte}_{key2_byte}__sha256_{source_hash}'
+    suffix = f'__k{key1_byte}_{key2_byte}__sha256_{source_hash}'
+    stem_limit = CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS - len(suffix)
+    if stem_limit < 1:
+        raise HTTPException(status_code=400, detail='Content-addressed name is invalid')
+    safe_stem = _safe_upload_name(Path(safe_name).stem or 'segy')
+    safe_stem = safe_stem[:stem_limit] or 'segy'
+    store_name = f'{safe_stem}{suffix}'
     return _safe_store_name(store_name)
 
 
@@ -237,11 +258,14 @@ def _ensure_trace_store_meta_key_bytes(
         )
 
 
-def _ensure_trace_store_meta_raw_path(
+def _ensure_trace_store_meta_identity(
     store_dir: Path,
     meta: dict,
     *,
     raw_path: Path,
+    original_name: str,
+    display_name: str,
+    store_name: str,
     source_sha256: str,
     source_size: int,
 ) -> dict:
@@ -255,8 +279,20 @@ def _ensure_trace_store_meta_raw_path(
     if updated.get('original_size') != source_size:
         updated['original_size'] = source_size
         changed = True
+    if updated.get('source_size') != source_size:
+        updated['source_size'] = source_size
+        changed = True
     if updated.get('source_sha256') != source_sha256:
         updated['source_sha256'] = source_sha256
+        changed = True
+    if updated.get('original_name') != original_name:
+        updated['original_name'] = original_name
+        changed = True
+    if updated.get('display_name') != display_name:
+        updated['display_name'] = display_name
+        changed = True
+    if updated.get('store_name') != store_name:
+        updated['store_name'] = store_name
         changed = True
 
     try:
@@ -361,9 +397,13 @@ def _trace_store_summary(store_dir: Path) -> dict | None:
     original_name = meta.get('original_name')
     if not isinstance(original_name, str) or not original_name:
         original_name = store_dir.name
+    display_name = meta.get('display_name')
+    if not isinstance(display_name, str) or not display_name:
+        display_name = original_name or store_dir.name
 
     summary = {
         'original_name': original_name,
+        'display_name': display_name,
         'store_name': store_dir.name,
         'key1_byte': key1_byte,
         'key2_byte': key2_byte,
@@ -372,6 +412,11 @@ def _trace_store_summary(store_dir: Path) -> dict | None:
     source_sha256 = meta.get('source_sha256')
     if isinstance(source_sha256, str):
         summary['source_sha256'] = source_sha256
+    source_size = meta.get('source_size')
+    if not isinstance(source_size, int):
+        source_size = meta.get('original_size')
+    if isinstance(source_size, int):
+        summary['source_size'] = source_size
     for key in ('dt', 'n_traces', 'n_samples'):
         value = meta.get(key)
         if isinstance(value, (int, float)):
@@ -471,10 +516,13 @@ async def _ingest_saved_segy(
                 raise HTTPException(status_code=409, detail=msg) from exc
 
     if reused and meta is not None:
-        meta = _ensure_trace_store_meta_raw_path(
+        meta = _ensure_trace_store_meta_identity(
             store_dir,
             meta,
             raw_path=raw_path,
+            original_name=original_name,
+            display_name=original_name,
+            store_name=store_dir.name,
             source_sha256=source_sha256,
             source_size=source_size,
         )
@@ -503,6 +551,16 @@ async def _ingest_saved_segy(
         key1_byte,
         key2_byte,
         source_sha256=source_sha256,
+    )
+    meta = _ensure_trace_store_meta_identity(
+        store_dir,
+        meta,
+        raw_path=raw_path,
+        original_name=original_name,
+        display_name=original_name,
+        store_name=store_dir.name,
+        source_sha256=source_sha256,
+        source_size=source_size,
     )
     register_trace_store(
         state=state,
@@ -703,10 +761,11 @@ async def import_compare_raw(
 
     staged_id = uuid4().hex
     safe_name = _safe_upload_name(file.filename)
-    raw_path = _staged_upload_dir() / staged_id / safe_name
+    raw_safe_name = _bounded_direct_import_raw_name(safe_name)
+    raw_path = _staged_upload_dir() / staged_id / raw_safe_name
     saved: SavedUpload | None = None
     try:
-        saved = await _save_upload_file(file, safe_name, raw_path=raw_path)
+        saved = await _save_upload_file(file, raw_safe_name, raw_path=raw_path)
         try:
             header_qc = await asyncio.to_thread(inspect_segy_header_qc, saved.raw_path)
         except Exception as exc:  # noqa: BLE001
@@ -727,7 +786,7 @@ async def import_compare_raw(
 
         durable_raw_path = _promote_staged_segy_to_raw(
             staged_path=saved.raw_path,
-            safe_name=safe_name,
+            safe_name=raw_safe_name,
             source_sha256=saved.source_sha256,
         )
         store_name = _content_addressed_compare_store_name(
