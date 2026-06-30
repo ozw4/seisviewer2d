@@ -1105,6 +1105,63 @@ test('import B source failure preserves existing selections and render', async (
   );
 });
 
+test('duplicate import result preserves existing B selection and render', async () => {
+  setupCompareImportDom();
+  const latestRender = { panels: [{ label: 'existing compare render' }] };
+  const existingTargets = [
+    {
+      fileId: 'active-file',
+      displayName: 'active.sgy',
+      originalName: 'active.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: true,
+    },
+    {
+      fileId: 'existing-b',
+      displayName: 'line-b.sgy',
+      originalName: 'line-b.sgy',
+      sourceSha256: 'abcdef1234567890',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: false,
+    },
+  ];
+  window.__svCompare.setCompareFileTargetsForTest(existingTargets);
+  window.__svCompare.setLatestCompareRenderForTest(latestRender);
+  window.updateCompareSourceOptions();
+  const sourceA = document.getElementById('compareSourceA');
+  const sourceB = document.getElementById('compareSourceB');
+  sourceA.value = window.__svCompare.compareSourceId('active-file', 'raw');
+  sourceB.value = window.__svCompare.compareSourceId('existing-b', 'raw');
+  const targetsBeforeImport = window.compareFileTargets.map((target) => ({ ...target }));
+  const fetch = vi.fn(async (url) => {
+    if (url === '/compare/raw/import') {
+      return okJson({
+        file_id: 'imported-duplicate',
+        original_name: 'line-b.sgy',
+        source_sha256: 'abcdef1234567890',
+        key1_byte: 189,
+        key2_byte: 193,
+      });
+    }
+    return okJson({ datasets: [] });
+  });
+  vi.stubGlobal('fetch', fetch);
+
+  const added = await window.__svCompare.importCompareBSourceFile(new File(['sgy'], 'line-b.sgy'));
+
+  expect(added).toBe(false);
+  expect(window.compareFileTargets).toEqual(targetsBeforeImport);
+  expect(sourceA.value).toBe(window.__svCompare.compareSourceId('active-file', 'raw'));
+  expect(sourceB.value).toBe(window.__svCompare.compareSourceId('existing-b', 'raw'));
+  expect([...sourceB.options].map((option) => option.value)).not.toContain(
+    window.__svCompare.compareSourceId('imported-duplicate', 'raw'),
+  );
+  expect(window.__svCompare.getLatestCompareRender()).toBe(latestRender);
+  expect(document.getElementById('compareStatus').textContent).toBe('Dataset is already added.');
+});
+
 test('import B source suppresses duplicate imports while request is in flight', async () => {
   setupCompareImportDom();
   let resolveImport;

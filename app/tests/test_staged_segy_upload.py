@@ -465,9 +465,18 @@ def test_open_segy_store_name_selects_requested_compare_store_with_same_original
 def test_open_segy_rejects_compare_store_name_traversal(_staged_env, store_name: str):
     client, _upload_mod, calls = _staged_env
 
-    response = client.post('/open_segy', data={'store_name': store_name})
+    response = client.post(
+        '/open_segy',
+        data={
+            'original_name': 'line 001.sgy',
+            'store_name': store_name,
+            'key1_byte': '189',
+            'key2_byte': '193',
+        },
+    )
 
     assert response.status_code == 400
+    assert response.json()['detail'] == 'Trace store name is unsafe'
     assert calls == {'qc': 0, 'ingest': 0}
 
 

@@ -822,6 +822,11 @@
         key2Byte: payload.key2_byte ?? active.key2Byte,
         isActive: false,
       }, active);
+      if (!result.added) {
+        setCompareStatus(result.reason);
+        loadCompareRecentDatasets();
+        return false;
+      }
       compareFileTargets = result.targets;
       window.compareFileTargets = compareFileTargets;
       clearRawCompareValidationCache();
@@ -839,8 +844,8 @@
       } else {
         onCompareControlChange();
       }
-      setCompareStatus(result.added ? 'B source imported.' : result.reason);
-      return result.added;
+      setCompareStatus('B source imported.');
+      return true;
     } catch (err) {
       setCompareStatus(err instanceof Error ? err.message : String(err));
       return false;
