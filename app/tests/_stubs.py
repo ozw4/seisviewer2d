@@ -28,8 +28,13 @@ def make_stub_reader(
     key2_byte = int(key_bytes[1])
 
     class _StubReader:
+        traces = section
+
         def get_key1_values(self):
             return key1_values_arr
+
+        def get_header(self, _byte: int):
+            return np.full(section.shape[0], int(key1_values_arr[0]), dtype=np.int64)
 
         def get_section(self, _key1_val: int):
             arr = np.array(section, dtype=np.float32, copy=True)
@@ -49,6 +54,64 @@ def make_stub_reader(
     _StubReader.key2_byte = key2_byte
 
     return _StubReader()
+
+
+def write_trace_store_metadata(
+    store_dir: Path,
+    *,
+    key1: int,
+    n_traces: int,
+    key1_byte: int = 189,
+    key2_byte: int = 193,
+    dt: float = 0.004,
+    source_sha256: str | None = None,
+    dtype: str = 'float32',
+) -> None:
+    store_dir.mkdir(parents=True, exist_ok=True)
+    meta: dict[str, object] = {
+        'key_bytes': {'key1': int(key1_byte), 'key2': int(key2_byte)},
+        'dt': float(dt),
+        'dtype': str(dtype),
+    }
+    if source_sha256 is not None:
+        meta['source_sha256'] = str(source_sha256)
+    (store_dir / 'meta.json').write_text(json.dumps(meta), encoding='utf-8')
+    np.savez(
+        store_dir / 'index.npz',
+        key1_values=np.asarray([int(key1)], dtype=np.int64),
+        key1_offsets=np.asarray([0], dtype=np.int64),
+        key1_counts=np.asarray([int(n_traces)], dtype=np.int64),
+    )
+
+
+def _ensure_trace_store_metadata(
+    store_dir: Path,
+    *,
+    key1: int,
+    n_traces: int,
+    key1_byte: int,
+    key2_byte: int,
+    source_sha256: str | None,
+) -> None:
+    store_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = store_dir / 'meta.json'
+    if not meta_path.exists():
+        meta: dict[str, object] = {
+            'key_bytes': {'key1': int(key1_byte), 'key2': int(key2_byte)},
+            'dt': 0.004,
+            'dtype': 'float32',
+        }
+        if source_sha256 is not None:
+            meta['source_sha256'] = str(source_sha256)
+        meta_path.write_text(json.dumps(meta), encoding='utf-8')
+    index_path = store_dir / 'index.npz'
+    if not index_path.exists():
+        np.savez(
+            index_path,
+            key1_values=np.asarray([int(key1)], dtype=np.int64),
+            key1_offsets=np.asarray([0], dtype=np.int64),
+            key1_counts=np.asarray([int(n_traces)], dtype=np.int64),
+        )
 
 
 def write_baseline_raw(
@@ -103,6 +166,14 @@ def write_baseline_raw(
             encoding='utf-8',
         )
         return
+    _ensure_trace_store_metadata(
+        store_dir,
+        key1=key1,
+        n_traces=len(trace_means_values),
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        source_sha256=source_sha256,
+    )
     write_raw_baseline_artifacts(
         store_dir,
         key1_byte=key1_byte,
@@ -125,4 +196,5 @@ __all__ = [
     'make_pipeline_outputs_stub',
     'make_stub_reader',
     'write_baseline_raw',
+    'write_trace_store_metadata',
 ]

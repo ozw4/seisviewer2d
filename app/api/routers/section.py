@@ -94,6 +94,7 @@ def _build_meta_perf_headers(
 def _build_window_section_cache_key(
     *,
     file_id: str,
+    normalization_file_id: str,
     key1: int,
     key1_byte: int,
     key2_byte: int,
@@ -122,6 +123,7 @@ def _build_window_section_cache_key(
     """Build the canonical cache key for section-window binary payloads."""
     base_key: tuple[object, ...] = (
         file_id,
+        normalization_file_id,
         int(key1),
         int(key1_byte),
         int(key2_byte),
@@ -397,6 +399,7 @@ def get_section_window_bin(
     y1: Annotated[int, Query(...)],
     key1_byte: Annotated[int, Query()] = 189,
     key2_byte: Annotated[int, Query()] = 193,
+    normalization_file_id: Annotated[str | None, Query()] = None,
     offset_byte: Annotated[int | None, Query()] = None,
     step_x: Annotated[int, Query(ge=1)] = 1,
     step_y: Annotated[int, Query(ge=1)] = 1,
@@ -424,10 +427,20 @@ def get_section_window_bin(
     mode = mode.lower()
     if mode not in {'amax', 'tracewise'}:
         raise HTTPException(status_code=400, detail='Unsupported scaling mode')
+    resolved_normalization_file_id = normalization_file_id or file_id
+    uses_pipeline_source = bool(pipeline_key) or bool(tap_label)
+    uses_reference_source = bool(reference_pipeline_key) or bool(reference_tap_label)
+    normalization_applies_to_raw = not uses_pipeline_source and not uses_reference_source
+    raw_normalization_file_id = (
+        resolved_normalization_file_id
+        if normalization_applies_to_raw
+        else file_id
+    )
     uses_offset = "offset" in DEFAULT_FBPICK_MODEL_ID.lower()
     forced_offset_byte = OFFSET_BYTE_FIXED if uses_offset else offset_byte
     cache_key = _build_window_section_cache_key(
         file_id=file_id,
+        normalization_file_id=raw_normalization_file_id,
         key1=key1,
         key1_byte=key1_byte,
         key2_byte=key2_byte,
@@ -471,8 +484,17 @@ def get_section_window_bin(
 
     perf_timings_ms: dict[str, float] = {}
     try:
+        if normalization_applies_to_raw:
+            get_or_create_raw_baseline(
+                file_id=raw_normalization_file_id,
+                key1_byte=int(key1_byte),
+                key2_byte=int(key2_byte),
+                app=request.app,
+                include_arrays=False,
+            )
         compressed = build_section_window_payload(
             file_id=file_id,
+            normalization_file_id=raw_normalization_file_id,
             key1=key1,
             key1_byte=key1_byte,
             key2_byte=key2_byte,
@@ -512,6 +534,8 @@ def get_section_window_bin(
             status_code=500,
             detail=str(exc),
         ) from exc
+    except BaselineComputationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except PipelineTapNotFoundError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:

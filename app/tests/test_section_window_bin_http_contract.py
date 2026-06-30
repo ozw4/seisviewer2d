@@ -16,10 +16,15 @@ from fastapi.testclient import TestClient
 # isn't installed in the test environment.
 sys.modules.setdefault('segyio', types.ModuleType('segyio'))
 
+from app.api import baselines as baselines_mod  # noqa: E402
 from app.api.routers import section as sec  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services import section_service as svc  # noqa: E402
-from app.tests._stubs import make_stub_reader, write_baseline_raw  # noqa: E402
+from app.tests._stubs import (  # noqa: E402
+    make_stub_reader,
+    write_baseline_raw,
+    write_trace_store_metadata,
+)
 
 
 def _decode_payload(resp) -> dict:
@@ -163,6 +168,82 @@ def test_get_section_window_bin_second_request_returns_cache_hit_headers(
     assert int(second.headers['x-sv-bytes']) == int(first.headers['x-sv-bytes'])
 
 
+def test_get_section_window_bin_cache_key_includes_normalization_file_id(
+    monkeypatch, tmp_path: Path
+):
+    key1 = 7
+    data_dir = tmp_path / 'B'
+    stats_a_dir = tmp_path / 'A'
+    reader_b = make_stub_reader(
+        np.array([[10.0, 12.0], [14.0, 16.0]], dtype=np.float32)
+    )
+    reader_a = make_stub_reader(
+        np.array([[8.0, 8.0], [12.0, 12.0]], dtype=np.float32)
+    )
+    readers = {'B': reader_b, 'A': reader_a}
+
+    monkeypatch.setattr(
+        sec,
+        'get_reader',
+        lambda fid, kb1, kb2, state=None: readers[fid],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        baselines_mod,
+        'get_reader',
+        lambda fid, kb1, kb2, state=None: readers[fid],
+        raising=True,
+    )
+
+    app.state.sv.file_registry.set_record('B', {'store_path': str(data_dir)})
+    app.state.sv.file_registry.set_record('A', {'store_path': str(stats_a_dir)})
+    write_trace_store_metadata(data_dir, key1=key1, n_traces=2)
+    write_trace_store_metadata(stats_a_dir, key1=key1, n_traces=2)
+
+    params = {
+        'file_id': 'B',
+        'key1': key1,
+        'x0': 0,
+        'x1': 1,
+        'y0': 0,
+        'y1': 1,
+        'step_x': 1,
+        'step_y': 1,
+        'transpose': False,
+        'scaling': 'amax',
+    }
+
+    with TestClient(app) as client:
+        norm_a = client.get(
+            '/get_section_window_bin',
+            params={**params, 'normalization_file_id': 'A'},
+        )
+        norm_b = client.get(
+            '/get_section_window_bin',
+            params={**params, 'normalization_file_id': 'B'},
+        )
+        norm_a_again = client.get(
+            '/get_section_window_bin',
+            params={**params, 'normalization_file_id': 'A'},
+        )
+
+    assert norm_a.status_code == 200
+    assert norm_b.status_code == 200
+    assert norm_a_again.status_code == 200
+    _assert_perf_headers(norm_a, expected_cache='miss')
+    _assert_perf_headers(norm_b, expected_cache='miss')
+    _assert_perf_headers(norm_a_again, expected_cache='hit')
+
+    payload_a = _decode_payload(norm_a)
+    payload_b = _decode_payload(norm_b)
+    q_a = np.frombuffer(payload_a['data'], dtype=np.int8).reshape(payload_a['shape'])
+    q_b = np.frombuffer(payload_b['data'], dtype=np.int8).reshape(payload_b['shape'])
+
+    assert np.array_equal(q_a, np.array([[0, 1], [2, 3]], dtype=np.int8))
+    assert not np.array_equal(q_a, q_b)
+    assert norm_a.content == norm_a_again.content
+
+
 def test_build_section_window_payload_reports_build_and_pack_separately(
     monkeypatch, tmp_path: Path
 ):
@@ -298,6 +379,7 @@ def test_get_section_window_bin_value_error_maps_to_400(monkeypatch, tmp_path: P
         sec, 'build_section_window_payload', _raise_value_error, raising=True
     )
     app.state.sv.file_registry.set_record('f', {'store_path': str(tmp_path)})
+    write_baseline_raw(tmp_path, key1=7, n_traces=1)
 
     with TestClient(app) as client:
         resp = client.get(
