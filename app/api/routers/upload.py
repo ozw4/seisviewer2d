@@ -3,13 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
-import re
-import shutil
-import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -23,13 +17,32 @@ from app.core.paths import (
     get_upload_dir,
 )
 from app.core.state import AppState
-from app.services.staged_upload_cleanup import (
-    cleanup_staged_upload,
-    cleanup_stale_staged_upload_dirs,
+from app.services.segy_upload_storage import (
+    SavedUpload,
+    cleanup_discarded_staged_upload as storage_cleanup_discarded_staged_upload,
+    cleanup_staged_upload as storage_cleanup_staged_upload,
+    cleanup_staged_uploads as storage_cleanup_staged_uploads,
+    ensure_staged_upload_cleanup_callback as storage_ensure_staged_upload_cleanup_callback,
+    promote_staged_segy_to_raw,
+    save_upload_file,
+    sha256_file,
+    staged_upload_dir,
 )
+from app.services.segy_ingest_service import ingest_saved_segy
 from app.services.trace_store_registration import register_trace_store
+from app.trace_store.catalog import (
+    ensure_trace_store_meta_key_bytes,
+    list_recent_dataset_summaries,
+    load_trace_store_meta,
+    trace_store_complete,
+)
+from app.trace_store.naming import (
+    bounded_direct_import_raw_name,
+    content_addressed_compare_store_name,
+    safe_store_name,
+    safe_upload_name,
+)
 from app.utils.ingest import SegyIngestor
-from app.utils.baseline_artifacts import has_split_baseline_artifacts
 from app.utils.header_qc import inspect_segy_header_qc
 
 router = APIRouter()
@@ -38,98 +51,27 @@ logger = logging.getLogger(__name__)
 UPLOAD_DIR = get_upload_dir()
 PROCESSED_DIR = get_processed_upload_dir()
 TRACE_DIR = get_trace_store_dir()
-UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
-STAGED_UPLOAD_CLEANUP_INTERVAL_SEC = 600
-CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS = 180
-DIRECT_IMPORT_RAW_NAME_MAX_CHARS = 180
-_last_staged_cleanup_ts = 0.0
-
-
-@dataclass(frozen=True)
-class SavedUpload:
-    original_name: str
-    safe_name: str
-    raw_path: Path
-    source_sha256: str
-    source_size: int
-
-
-def _safe_upload_name(filename: str) -> str:
-    safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
-    if safe_name in {'', '.', '..'}:
-        raise HTTPException(
-            status_code=400,
-            detail='Uploaded file must have a safe filename',
-        )
-    return safe_name
-
-
-def _safe_store_name(store_name: str) -> str:
-    if store_name in {'', '.', '..'}:
-        raise HTTPException(status_code=400, detail='Trace store name is unsafe')
-    if Path(store_name).is_absolute():
-        raise HTTPException(status_code=400, detail='Trace store name is unsafe')
-    if '/' in store_name or '\\' in store_name:
-        raise HTTPException(status_code=400, detail='Trace store name is unsafe')
-    safe_name = _safe_upload_name(store_name)
-    if safe_name != store_name:
-        raise HTTPException(status_code=400, detail='Trace store name is unsafe')
-    return safe_name
-
-
-def _bounded_direct_import_raw_name(safe_name: str) -> str:
-    if len(safe_name) <= DIRECT_IMPORT_RAW_NAME_MAX_CHARS:
-        return safe_name
-
-    path = Path(safe_name)
-    suffix = path.suffix
-    if len(suffix) >= DIRECT_IMPORT_RAW_NAME_MAX_CHARS:
-        suffix = ''
-    stem_limit = DIRECT_IMPORT_RAW_NAME_MAX_CHARS - len(suffix)
-    stem = path.stem or 'segy'
-    stem = stem[:stem_limit] or 'segy'
-    return _safe_upload_name(f'{stem}{suffix}')
-
-
-def _content_addressed_compare_store_name(
-    *,
-    safe_name: str,
-    source_sha256: str,
-    key1_byte: int,
-    key2_byte: int,
-) -> str:
-    source_hash = source_sha256.lower()
-    if not re.fullmatch(r'[0-9a-f]{64}', source_hash):
-        raise HTTPException(status_code=400, detail='Source sha256 is invalid')
-    suffix = f'__k{key1_byte}_{key2_byte}__sha256_{source_hash}'
-    stem_limit = CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS - len(suffix)
-    if stem_limit < 1:
-        raise HTTPException(status_code=400, detail='Content-addressed name is invalid')
-    safe_stem = _safe_upload_name(Path(safe_name).stem or 'segy')
-    safe_stem = safe_stem[:stem_limit] or 'segy'
-    store_name = f'{safe_stem}{suffix}'
-    return _safe_store_name(store_name)
 
 
 def _staged_upload_dir() -> Path:
-    return UPLOAD_DIR / 'staged'
+    return staged_upload_dir(UPLOAD_DIR)
 
 
 def _cleanup_staged_upload(raw_path: Path) -> None:
-    cleanup_staged_upload(raw_path, staged_root=_staged_upload_dir())
+    storage_cleanup_staged_upload(raw_path, upload_dir=UPLOAD_DIR)
 
 
 def _cleanup_discarded_staged_upload(_key, value, _reason: str) -> None:
-    if not isinstance(value, dict):
-        return
-    raw_path = value.get('raw_path')
-    if not isinstance(raw_path, (str, Path)):
-        return
-    _cleanup_staged_upload(Path(raw_path))
+    storage_cleanup_discarded_staged_upload(
+        _key,
+        value,
+        _reason,
+        upload_dir=UPLOAD_DIR,
+    )
 
 
 def _ensure_staged_upload_cleanup_callback(state: AppState) -> None:
-    state.staged_uploads.set_on_discard(_cleanup_discarded_staged_upload)
+    storage_ensure_staged_upload_cleanup_callback(state, upload_dir=UPLOAD_DIR)
 
 
 def cleanup_staged_uploads(
@@ -138,35 +80,16 @@ def cleanup_staged_uploads(
     force: bool = False,
     now_ts: float | None = None,
 ) -> int:
-    """Purge expired staged records and stale staged directories."""
-    global _last_staged_cleanup_ts
-
-    now = time.time() if now_ts is None else float(now_ts)
-    with state.lock:
-        _ensure_staged_upload_cleanup_callback(state)
-        removed = state.staged_uploads.purge_expired()
-        active_ids = set(state.staged_uploads.keys())
-        ttl_sec = state.staged_uploads.ttl_sec
-
-    if not force and now - _last_staged_cleanup_ts < STAGED_UPLOAD_CLEANUP_INTERVAL_SEC:
-        return removed
-
-    _last_staged_cleanup_ts = now
-    removed += cleanup_stale_staged_upload_dirs(
-        staged_root=_staged_upload_dir(),
-        ttl_sec=ttl_sec,
-        active_ids=active_ids,
-        now_ts=now,
+    return storage_cleanup_staged_uploads(
+        state,
+        upload_dir=UPLOAD_DIR,
+        force=force,
+        now_ts=now_ts,
     )
-    return removed
 
 
 def _sha256_file(path: Path) -> str:
-    hasher = hashlib.sha256()
-    with path.open('rb') as fh:
-        for chunk in iter(lambda: fh.read(UPLOAD_CHUNK_SIZE), b''):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+    return sha256_file(path)
 
 
 def _promote_staged_segy_to_raw(
@@ -175,269 +98,12 @@ def _promote_staged_segy_to_raw(
     safe_name: str,
     source_sha256: str,
 ) -> Path:
-    raw_dir = UPLOAD_DIR / 'raw' / source_sha256
-    raw_path = raw_dir / safe_name
-    raw_dir.mkdir(parents=True, exist_ok=True)
-
-    if raw_path.exists():
-        if raw_path.is_file() and _sha256_file(raw_path) == source_sha256:
-            return raw_path
-        raw_path = raw_dir / f'{raw_path.stem}.{uuid4().hex}{raw_path.suffix}'
-
-    tmp_path = raw_path.with_suffix(raw_path.suffix + f'.{uuid4().hex}.tmp')
-    try:
-        shutil.copy2(staged_path, tmp_path)
-        tmp_path.replace(raw_path)
-    except OSError as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=422,
-            detail=f'Unable to promote staged SEG-Y: {exc}',
-        ) from exc
-    return raw_path
-
-
-def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bool:
-    """Return True only when the requested trace store artifacts are present."""
-    if not store_dir.is_dir():
-        return False
-    meta_path = store_dir / 'meta.json'
-    if not (
-        (store_dir / 'traces.npy').exists()
-        and (store_dir / 'index.npz').exists()
-        and meta_path.exists()
-    ):
-        return False
-    meta = _load_trace_store_meta(meta_path)
-    if not isinstance(meta, dict):
-        return False
-    kb = meta.get('key_bytes')
-    if not (
-        isinstance(kb, dict)
-        and kb.get('key1') == key1_byte
-        and kb.get('key2') == key2_byte
-    ):
-        return False
-    source_sha256 = meta.get('source_sha256')
-    if source_sha256 is not None and not isinstance(source_sha256, str):
-        return False
-    return has_split_baseline_artifacts(
-        store_dir,
-        key1_byte=key1_byte,
-        key2_byte=key2_byte,
+    return promote_staged_segy_to_raw(
+        staged_path=staged_path,
+        safe_name=safe_name,
         source_sha256=source_sha256,
+        upload_dir=UPLOAD_DIR,
     )
-
-
-def _load_trace_store_meta(meta_path: Path) -> dict | None:
-    try:
-        meta = json.loads(meta_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(meta, dict):
-        return None
-    return meta
-
-
-def _ensure_trace_store_meta_key_bytes(
-    meta: dict,
-    *,
-    key1_byte: int,
-    key2_byte: int,
-) -> None:
-    key_bytes = meta.get('key_bytes')
-    if not isinstance(key_bytes, dict):
-        raise HTTPException(
-            status_code=409,
-            detail='TraceStore key bytes do not match requested key bytes',
-        )
-    if key_bytes.get('key1') != key1_byte or key_bytes.get('key2') != key2_byte:
-        raise HTTPException(
-            status_code=409,
-            detail='TraceStore key bytes do not match requested key bytes',
-        )
-
-
-def _ensure_trace_store_meta_identity(
-    store_dir: Path,
-    meta: dict,
-    *,
-    raw_path: Path,
-    original_name: str,
-    display_name: str,
-    store_name: str,
-    source_sha256: str,
-    source_size: int,
-) -> dict:
-    updated = dict(meta)
-    changed = False
-    raw_path_text = str(raw_path)
-
-    if updated.get('original_segy_path') != raw_path_text:
-        updated['original_segy_path'] = raw_path_text
-        changed = True
-    if updated.get('original_size') != source_size:
-        updated['original_size'] = source_size
-        changed = True
-    if updated.get('source_size') != source_size:
-        updated['source_size'] = source_size
-        changed = True
-    if updated.get('source_sha256') != source_sha256:
-        updated['source_sha256'] = source_sha256
-        changed = True
-    if updated.get('original_name') != original_name:
-        updated['original_name'] = original_name
-        changed = True
-    if updated.get('display_name') != display_name:
-        updated['display_name'] = display_name
-        changed = True
-    if updated.get('store_name') != store_name:
-        updated['store_name'] = store_name
-        changed = True
-
-    try:
-        original_mtime = raw_path.stat().st_mtime
-    except OSError:
-        original_mtime = None
-    if original_mtime is not None and updated.get('original_mtime') != original_mtime:
-        updated['original_mtime'] = original_mtime
-        changed = True
-
-    if not changed:
-        return meta
-
-    meta_path = store_dir / 'meta.json'
-    tmp_path = meta_path.with_suffix(meta_path.suffix + f'.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(json.dumps(updated), encoding='utf-8')
-        tmp_path.replace(meta_path)
-    except OSError as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=409,
-            detail=f'Unable to update trace store metadata: {exc}',
-        ) from exc
-    return updated
-
-
-def _trace_store_matches_source(
-    store_dir: Path,
-    key1_byte: int,
-    key2_byte: int,
-    *,
-    source_sha256: str | None = None,
-    source_size: int | None = None,
-) -> dict | None:
-    if not _trace_store_complete(store_dir, key1_byte, key2_byte):
-        return None
-    meta_path = store_dir / 'meta.json'
-    meta = _load_trace_store_meta(meta_path)
-    if meta is None:
-        return None
-    key_bytes = meta.get('key_bytes')
-    if not isinstance(key_bytes, dict):
-        return None
-    if key_bytes.get('key1') != key1_byte or key_bytes.get('key2') != key2_byte:
-        return None
-    # --- Prefer exact identity via content hash when available ---
-    meta_hash = meta.get('source_sha256')
-    if isinstance(source_sha256, str) and isinstance(meta_hash, str):
-        return meta if meta_hash == source_sha256 else None
-
-    # --- Fallback: size match only (for legacy stores without hash) ---
-    if isinstance(source_size, int):
-        original_size = meta.get('original_size')
-        if isinstance(original_size, int) and original_size == source_size:
-            return meta
-        return None
-    return meta
-
-
-def _archive_trace_store(store_dir: Path) -> None:
-    if not store_dir.exists():
-        return
-    archive_dir = store_dir.parent / f'{store_dir.name}.old-{uuid4().hex}'
-    store_dir.rename(archive_dir)
-
-
-def _trace_store_summary(store_dir: Path) -> dict | None:
-    meta_path = store_dir / 'meta.json'
-    meta = _load_trace_store_meta(meta_path)
-    if meta is None:
-        logger.warning('Skipping trace store with unreadable metadata: %s', store_dir)
-        return None
-
-    key_bytes = meta.get('key_bytes')
-    if not isinstance(key_bytes, dict):
-        logger.warning(
-            'Skipping trace store with invalid key byte metadata: %s', store_dir
-        )
-        return None
-
-    key1_byte = key_bytes.get('key1')
-    key2_byte = key_bytes.get('key2')
-    if not isinstance(key1_byte, int) or not isinstance(key2_byte, int):
-        logger.warning('Skipping trace store with missing key bytes: %s', store_dir)
-        return None
-
-    if not _trace_store_complete(store_dir, key1_byte, key2_byte):
-        logger.warning(
-            'Skipping incomplete trace store in recent datasets: %s', store_dir
-        )
-        return None
-
-    try:
-        last_used_ts = meta_path.stat().st_mtime
-    except OSError:
-        logger.warning(
-            'Skipping trace store with unreadable metadata mtime: %s', store_dir
-        )
-        return None
-
-    original_name = meta.get('original_name')
-    if not isinstance(original_name, str) or not original_name:
-        original_name = store_dir.name
-    display_name = meta.get('display_name')
-    if not isinstance(display_name, str) or not display_name:
-        display_name = original_name or store_dir.name
-
-    summary = {
-        'original_name': original_name,
-        'display_name': display_name,
-        'store_name': store_dir.name,
-        'key1_byte': key1_byte,
-        'key2_byte': key2_byte,
-        'last_used_ts': last_used_ts,
-    }
-    source_sha256 = meta.get('source_sha256')
-    if isinstance(source_sha256, str):
-        summary['source_sha256'] = source_sha256
-    source_size = meta.get('source_size')
-    if not isinstance(source_size, int):
-        source_size = meta.get('original_size')
-    if isinstance(source_size, int):
-        summary['source_size'] = source_size
-    for key in ('dt', 'n_traces', 'n_samples'):
-        value = meta.get(key)
-        if isinstance(value, (int, float)):
-            summary[key] = value
-    return summary
-
-
-def _list_recent_dataset_summaries() -> list[dict]:
-    summaries: list[dict] = []
-    if not TRACE_DIR.exists():
-        return summaries
-
-    for child in TRACE_DIR.iterdir():
-        if not child.is_dir():
-            continue
-        summary = _trace_store_summary(child)
-        if summary is not None:
-            summaries.append(summary)
-
-    summaries.sort(key=lambda item: item['last_used_ts'], reverse=True)
-    return summaries
 
 
 async def _save_upload_file(
@@ -446,137 +112,7 @@ async def _save_upload_file(
     *,
     raw_path: Path,
 ) -> SavedUpload:
-    original_name = file.filename or safe_name
-    raw_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = raw_path.with_suffix(raw_path.suffix + f'.{uuid4().hex}.tmp')
-    hasher = hashlib.sha256()
-    try:
-        with tmp_path.open('wb') as temp_file:
-            while True:
-                chunk = await file.read(UPLOAD_CHUNK_SIZE)
-                if not chunk:
-                    break
-                hasher.update(chunk)
-                temp_file.write(chunk)
-        tmp_path.replace(raw_path)
-        source_size = raw_path.stat().st_size
-    except OSError as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    return SavedUpload(
-        original_name=original_name,
-        safe_name=safe_name,
-        raw_path=raw_path,
-        source_sha256=hasher.hexdigest(),
-        source_size=int(source_size),
-    )
-
-
-async def _ingest_saved_segy(
-    *,
-    request: Request,
-    original_name: str,
-    safe_name: str,
-    raw_path: Path,
-    source_sha256: str,
-    source_size: int,
-    key1_byte: int,
-    key2_byte: int,
-    store_name: str | None = None,
-    allow_archive_existing: bool = True,
-) -> dict:
-    state = get_state(request.app)
-    resolved_store_name = safe_name if store_name is None else store_name
-    store_dir = TRACE_DIR / _safe_store_name(resolved_store_name)
-    file_id = str(uuid4())
-
-    meta: dict | None = None
-    reused = False
-    if store_dir.exists():
-        meta = _trace_store_matches_source(
-            store_dir,
-            key1_byte,
-            key2_byte,
-            source_sha256=source_sha256,
-            source_size=source_size,
-        )
-        if meta is not None:
-            reused = True
-        else:
-            if not allow_archive_existing:
-                raise HTTPException(
-                    status_code=409,
-                    detail='Trace store already exists for a different source or key bytes',
-                )
-            try:
-                _archive_trace_store(store_dir)
-            except OSError as exc:
-                msg = f'Unable to archive existing trace store: {exc}'
-                raise HTTPException(status_code=409, detail=msg) from exc
-
-    if reused and meta is not None:
-        meta = _ensure_trace_store_meta_identity(
-            store_dir,
-            meta,
-            raw_path=raw_path,
-            original_name=original_name,
-            display_name=original_name,
-            store_name=store_dir.name,
-            source_sha256=source_sha256,
-            source_size=source_size,
-        )
-        logger.info('Reusing trace store for %s', original_name)
-        register_trace_store(
-            state=state,
-            file_id=file_id,
-            store_dir=store_dir,
-            key1_byte=key1_byte,
-            key2_byte=key2_byte,
-            dt=meta.get('dt') if isinstance(meta, dict) else None,
-            update_registry=True,
-            touch_meta=True,
-        )
-        return {
-            'file_id': file_id,
-            'reused_trace_store': True,
-            'store_name': store_dir.name,
-        }
-
-    store_dir.mkdir(parents=True, exist_ok=True)
-    meta = await asyncio.to_thread(
-        SegyIngestor.from_segy,
-        str(raw_path),
-        store_dir,
-        key1_byte,
-        key2_byte,
-        source_sha256=source_sha256,
-    )
-    meta = _ensure_trace_store_meta_identity(
-        store_dir,
-        meta,
-        raw_path=raw_path,
-        original_name=original_name,
-        display_name=original_name,
-        store_name=store_dir.name,
-        source_sha256=source_sha256,
-        source_size=source_size,
-    )
-    register_trace_store(
-        state=state,
-        file_id=file_id,
-        store_dir=store_dir,
-        key1_byte=key1_byte,
-        key2_byte=key2_byte,
-        dt=meta.get('dt') if isinstance(meta, dict) else None,
-        update_registry=True,
-        touch_meta=True,
-    )
-    return {
-        'file_id': file_id,
-        'reused_trace_store': False,
-        'store_name': store_dir.name,
-    }
+    return await save_upload_file(file, safe_name, raw_path=raw_path)
 
 
 def _selected_header_qc_summary(
@@ -614,7 +150,7 @@ def _selected_header_qc_summary(
 
 @router.get('/recent_datasets')
 async def recent_datasets():
-    return {'datasets': _list_recent_dataset_summaries()}
+    return {'datasets': list_recent_dataset_summaries(TRACE_DIR)}
 
 
 @router.post('/open_segy')
@@ -631,12 +167,12 @@ async def open_segy(
         raw_store_name = form.get('store_name')
         if not isinstance(raw_store_name, str):
             raise HTTPException(status_code=400, detail='Trace store name is unsafe')
-        safe_store_name = _safe_store_name(raw_store_name)
-        store_dir = TRACE_DIR / safe_store_name
+        safe_store = safe_store_name(raw_store_name)
+        store_dir = TRACE_DIR / safe_store
         requested_name = raw_store_name
         store_name_was_provided = True
     elif original_name is not None:
-        safe_name = _safe_upload_name(original_name)
+        safe_name = safe_upload_name(original_name)
         store_dir = TRACE_DIR / safe_name
         requested_name = original_name
         store_name_was_provided = False
@@ -654,15 +190,15 @@ async def open_segy(
         )
     logger.info('Opening existing trace store for %s', store_dir.name)
     file_id = str(uuid4())
-    reused = _trace_store_complete(store_dir, key1_byte, key2_byte)
-    meta = _load_trace_store_meta(meta_path)
+    reused = trace_store_complete(store_dir, key1_byte, key2_byte)
+    meta = load_trace_store_meta(meta_path)
     if meta is None:
         raise HTTPException(
             status_code=500,
             detail='Trace store metadata is unreadable',
         )
     if store_name_was_provided:
-        _ensure_trace_store_meta_key_bytes(
+        ensure_trace_store_meta_key_bytes(
             meta,
             key1_byte=key1_byte,
             key2_byte=key2_byte,
@@ -726,10 +262,12 @@ async def upload_segy(
             status_code=400, detail='Uploaded file must have a filename'
         )
     logger.info('Uploading file: %s', file.filename)
-    safe_name = _safe_upload_name(file.filename)
+    safe_name = safe_upload_name(file.filename)
     saved = await _save_upload_file(file, safe_name, raw_path=UPLOAD_DIR / safe_name)
-    return await _ingest_saved_segy(
-        request=request,
+    state = get_state(request.app)
+    return await ingest_saved_segy(
+        state=state,
+        trace_dir=TRACE_DIR,
         original_name=saved.original_name,
         safe_name=saved.safe_name,
         raw_path=saved.raw_path,
@@ -760,8 +298,8 @@ async def import_compare_raw(
         )
 
     staged_id = uuid4().hex
-    safe_name = _safe_upload_name(file.filename)
-    raw_safe_name = _bounded_direct_import_raw_name(safe_name)
+    safe_name = safe_upload_name(file.filename)
+    raw_safe_name = bounded_direct_import_raw_name(safe_name)
     raw_path = _staged_upload_dir() / staged_id / raw_safe_name
     saved: SavedUpload | None = None
     try:
@@ -789,14 +327,15 @@ async def import_compare_raw(
             safe_name=raw_safe_name,
             source_sha256=saved.source_sha256,
         )
-        store_name = _content_addressed_compare_store_name(
+        store_name = content_addressed_compare_store_name(
             safe_name=safe_name,
             source_sha256=saved.source_sha256,
             key1_byte=key1_byte,
             key2_byte=key2_byte,
         )
-        result = await _ingest_saved_segy(
-            request=request,
+        result = await ingest_saved_segy(
+            state=state,
+            trace_dir=TRACE_DIR,
             original_name=saved.original_name,
             safe_name=safe_name,
             raw_path=durable_raw_path,
@@ -837,7 +376,7 @@ async def stage_segy(
         )
 
     staged_id = uuid4().hex
-    safe_name = _safe_upload_name(file.filename)
+    safe_name = safe_upload_name(file.filename)
     raw_path = _staged_upload_dir() / staged_id / safe_name
     saved = await _save_upload_file(file, safe_name, raw_path=raw_path)
     try:
@@ -905,8 +444,9 @@ async def ingest_staged_segy(
         safe_name=safe_name,
         source_sha256=source_sha256,
     )
-    result = await _ingest_saved_segy(
-        request=request,
+    result = await ingest_saved_segy(
+        state=state,
+        trace_dir=TRACE_DIR,
         original_name=str(staged.get('original_name') or staged.get('safe_name')),
         safe_name=safe_name,
         raw_path=durable_raw_path,

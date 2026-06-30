@@ -15,7 +15,13 @@ from fastapi import UploadFile
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services import segy_upload_storage
 from app.tests._stubs import write_baseline_raw
+from app.trace_store.naming import (
+    CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS,
+    DIRECT_IMPORT_RAW_NAME_MAX_CHARS,
+    content_addressed_compare_store_name,
+)
 
 
 def _qc_payload() -> dict:
@@ -54,6 +60,7 @@ def _qc_payload() -> dict:
 @pytest.fixture()
 def _staged_env(tmp_path: Path, monkeypatch):
     from app.api.routers import upload as upload_mod
+    from app.services import segy_ingest_service
 
     state = app.state.sv
     state.file_registry.clear()
@@ -90,6 +97,7 @@ def _staged_env(tmp_path: Path, monkeypatch):
             )
 
     monkeypatch.setattr(upload_mod, 'register_trace_store', _fake_register)
+    monkeypatch.setattr(segy_ingest_service, 'register_trace_store', _fake_register)
 
     calls = {'qc': 0, 'ingest': 0}
 
@@ -138,6 +146,12 @@ def _staged_env(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _fake_qc, raising=True)
     monkeypatch.setattr(
         upload_mod.SegyIngestor, 'from_segy', _fake_from_segy, raising=True
+    )
+    monkeypatch.setattr(
+        segy_ingest_service.SegyIngestor,
+        'from_segy',
+        _fake_from_segy,
+        raising=True,
     )
 
     try:
@@ -300,6 +314,62 @@ def _run_async(coro):
     return result.get('value')
 
 
+def test_save_upload_file_returns_hash_and_size(tmp_path: Path):
+    data = b'saved-upload'
+    upload = UploadFile(file=io.BytesIO(data), filename='line.sgy')
+    raw_path = tmp_path / 'raw' / 'line.sgy'
+
+    saved = _run_async(
+        segy_upload_storage.save_upload_file(
+            upload,
+            'line.sgy',
+            raw_path=raw_path,
+        )
+    )
+
+    assert saved.original_name == 'line.sgy'
+    assert saved.safe_name == 'line.sgy'
+    assert saved.raw_path == raw_path
+    assert saved.source_sha256 == hashlib.sha256(data).hexdigest()
+    assert saved.source_size == len(data)
+    assert raw_path.read_bytes() == data
+
+
+def test_promote_staged_segy_to_raw_reuses_same_hash_raw(tmp_path: Path):
+    upload_dir = tmp_path / 'uploads'
+    data = b'reusable-raw'
+    source_sha256 = hashlib.sha256(data).hexdigest()
+    staged_path = upload_dir / 'staged' / 'stage-id' / 'line.sgy'
+    staged_path.parent.mkdir(parents=True)
+    staged_path.write_bytes(data)
+    raw_path = upload_dir / 'raw' / source_sha256 / 'line.sgy'
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_bytes(data)
+
+    promoted = segy_upload_storage.promote_staged_segy_to_raw(
+        staged_path=staged_path,
+        safe_name='line.sgy',
+        source_sha256=source_sha256,
+        upload_dir=upload_dir,
+    )
+
+    assert promoted == raw_path
+    assert raw_path.read_bytes() == data
+
+
+def test_cleanup_staged_upload_refuses_paths_outside_staged_root(tmp_path: Path):
+    upload_dir = tmp_path / 'uploads'
+    outside_dir = tmp_path / 'outside'
+    outside_path = outside_dir / 'unsafe.sgy'
+    outside_dir.mkdir()
+    outside_path.write_bytes(b'unsafe')
+
+    segy_upload_storage.cleanup_staged_upload(outside_path, upload_dir=upload_dir)
+
+    assert outside_path.exists()
+    assert outside_dir.exists()
+
+
 def test_compare_raw_import_ingests_content_addressed_store(_staged_env):
     client, upload_mod, calls = _staged_env
     data = b'compare-raw'
@@ -377,14 +447,18 @@ def test_compare_raw_import_long_filename_store_name_is_bounded(_staged_env):
     assert response.status_code == 200, response.text
     body = response.json()
     suffix = f'__k189_193__sha256_{source_sha256}'
-    assert len(body['store_name']) <= upload_mod.CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS
+    assert len(body['store_name']) <= CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS
     assert body['store_name'].endswith(suffix)
     assert '/' not in body['store_name']
     assert '\\' not in body['store_name']
     store_dir = Path(upload_mod.TRACE_DIR) / body['store_name']
     assert store_dir.is_dir()
-    assert len(store_dir.name) <= upload_mod.CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS
+    assert len(store_dir.name) <= CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS
     meta = json.loads((store_dir / 'meta.json').read_text(encoding='utf-8'))
+    raw_path = Path(meta['original_segy_path'])
+    assert raw_path.is_file()
+    assert raw_path.parent == Path(upload_mod.UPLOAD_DIR) / 'raw' / source_sha256
+    assert len(raw_path.name) <= DIRECT_IMPORT_RAW_NAME_MAX_CHARS
     assert meta['original_name'] == original_name
     assert meta['display_name'] == original_name
     assert meta['store_name'] == body['store_name']
@@ -451,7 +525,7 @@ def test_compare_raw_import_same_basename_does_not_archive_upload_store(
     client, upload_mod, _calls = _staged_env
     data = b'different-compare-source'
     source_sha256 = hashlib.sha256(data).hexdigest()
-    expected_store_name = upload_mod._content_addressed_compare_store_name(
+    expected_store_name = content_addressed_compare_store_name(
         safe_name='line_001.sgy',
         source_sha256=source_sha256,
         key1_byte=189,
@@ -478,7 +552,7 @@ def test_compare_raw_import_content_addressed_conflict_returns_409_without_archi
     client, upload_mod, calls = _staged_env
     data = b'conflicting-compare-source'
     source_sha256 = hashlib.sha256(data).hexdigest()
-    store_name = upload_mod._content_addressed_compare_store_name(
+    store_name = content_addressed_compare_store_name(
         safe_name='line_001.sgy',
         source_sha256=source_sha256,
         key1_byte=189,
