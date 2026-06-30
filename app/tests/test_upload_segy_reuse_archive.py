@@ -207,7 +207,6 @@ def _run_async(coro):
 
 
 def test_content_addressed_compare_store_name_uses_safe_stem_and_hash(_upload_env):
-    _client, upload_mod, _calls = _upload_env
     source_sha256 = 'abcdef1234567890' * 4
 
     store_name = content_addressed_compare_store_name(
