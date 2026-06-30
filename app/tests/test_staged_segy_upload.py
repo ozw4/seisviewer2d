@@ -333,9 +333,61 @@ def test_compare_raw_import_ingests_content_addressed_store(_staged_env):
         Path(upload_mod.UPLOAD_DIR) / 'raw' / source_sha256 / 'line_001.sgy'
     )
     assert meta['original_segy_path'] == str(durable_raw_path)
+    assert meta['original_name'] == 'line 001.sgy'
+    assert meta['display_name'] == 'line 001.sgy'
+    assert meta['store_name'] == expected_store_name
+    assert meta['source_sha256'] == source_sha256
+    assert meta['source_size'] == len(data)
     assert durable_raw_path.read_bytes() == data
     staged_root = Path(upload_mod.UPLOAD_DIR) / 'staged'
     assert not staged_root.exists() or list(staged_root.iterdir()) == []
+
+
+def test_recent_datasets_uses_original_display_name_for_compare_import(_staged_env):
+    client, _upload_mod, _calls = _staged_env
+    data = b'recent-compare-raw'
+    source_sha256 = hashlib.sha256(data).hexdigest()
+
+    imported = _compare_raw_import(client, data=data)
+    assert imported.status_code == 200, imported.text
+    store_name = imported.json()['store_name']
+
+    response = client.get('/recent_datasets')
+
+    assert response.status_code == 200, response.text
+    datasets = response.json()['datasets']
+    item = next(dataset for dataset in datasets if dataset['store_name'] == store_name)
+    assert item['display_name'] == 'line 001.sgy'
+    assert item['original_name'] == 'line 001.sgy'
+    assert '__sha256_' not in item['display_name']
+    assert item['store_name'] == store_name
+    assert item['source_sha256'] == source_sha256
+    assert item['key1_byte'] == 189
+    assert item['key2_byte'] == 193
+
+
+def test_compare_raw_import_long_filename_store_name_is_bounded(_staged_env):
+    client, upload_mod, _calls = _staged_env
+    data = b'long-name-compare-raw'
+    source_sha256 = hashlib.sha256(data).hexdigest()
+    original_name = f'{"line_" * 70}.sgy'
+
+    response = _compare_raw_import(client, name=original_name, data=data)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    suffix = f'__k189_193__sha256_{source_sha256}'
+    assert len(body['store_name']) <= upload_mod.CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS
+    assert body['store_name'].endswith(suffix)
+    assert '/' not in body['store_name']
+    assert '\\' not in body['store_name']
+    store_dir = Path(upload_mod.TRACE_DIR) / body['store_name']
+    assert store_dir.is_dir()
+    assert len(store_dir.name) <= upload_mod.CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS
+    meta = json.loads((store_dir / 'meta.json').read_text(encoding='utf-8'))
+    assert meta['original_name'] == original_name
+    assert meta['display_name'] == original_name
+    assert meta['store_name'] == body['store_name']
 
 
 def test_compare_raw_import_reuses_same_source_hash_and_key_bytes(_staged_env):
@@ -359,6 +411,38 @@ def test_compare_raw_import_reuses_same_source_hash_and_key_bytes(_staged_env):
     assert first.json()['file_id'] != second.json()['file_id']
     assert stores_after_second == stores_after_first
     assert calls == {'qc': 2, 'ingest': 1}
+
+
+def test_compare_raw_import_same_basename_different_content_creates_distinct_stores(
+    _staged_env,
+):
+    client, _upload_mod, _calls = _staged_env
+    first_sha = hashlib.sha256(b'compare-a').hexdigest()
+    second_sha = hashlib.sha256(b'compare-b').hexdigest()
+
+    first = _compare_raw_import(client, name='line 001.sgy', data=b'compare-a')
+    second = _compare_raw_import(client, name='line 001.sgy', data=b'compare-b')
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    first_body = first.json()
+    second_body = second.json()
+    assert first_body['store_name'] != second_body['store_name']
+    assert first_body['source_sha256'] == first_sha
+    assert second_body['source_sha256'] == second_sha
+
+    recent = client.get('/recent_datasets')
+    assert recent.status_code == 200, recent.text
+    by_sha = {
+        item['source_sha256']: item
+        for item in recent.json()['datasets']
+        if item.get('source_sha256') in {first_sha, second_sha}
+    }
+    assert set(by_sha) == {first_sha, second_sha}
+    assert by_sha[first_sha]['store_name'] == first_body['store_name']
+    assert by_sha[second_sha]['store_name'] == second_body['store_name']
+    assert by_sha[first_sha]['display_name'] == 'line 001.sgy'
+    assert by_sha[second_sha]['display_name'] == 'line 001.sgy'
 
 
 def test_compare_raw_import_same_basename_does_not_archive_upload_store(
