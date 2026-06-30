@@ -29,20 +29,13 @@ from app.services.segy_upload_storage import (
     staged_upload_dir,
 )
 from app.services.segy_ingest_service import ingest_saved_segy
-from app.services.trace_store_registration import register_trace_store
-from app.trace_store.catalog import (
-    ensure_trace_store_meta_key_bytes,
-    list_recent_dataset_summaries,
-    load_trace_store_meta,
-    trace_store_complete,
-)
+from app.services.segy_open_service import open_existing_trace_store
+from app.trace_store.catalog import list_recent_dataset_summaries
 from app.trace_store.naming import (
     bounded_direct_import_raw_name,
     content_addressed_compare_store_name,
-    safe_store_name,
     safe_upload_name,
 )
-from app.utils.ingest import SegyIngestor
 from app.utils.header_qc import inspect_segy_header_qc
 
 router = APIRouter()
@@ -163,91 +156,16 @@ async def open_segy(
 ):
     state = get_state(request.app)
     form = await request.form()
-    if 'store_name' in form:
-        raw_store_name = form.get('store_name')
-        if not isinstance(raw_store_name, str):
-            raise HTTPException(status_code=400, detail='Trace store name is unsafe')
-        safe_store = safe_store_name(raw_store_name)
-        store_dir = TRACE_DIR / safe_store
-        requested_name = raw_store_name
-        store_name_was_provided = True
-    elif original_name is not None:
-        safe_name = safe_upload_name(original_name)
-        store_dir = TRACE_DIR / safe_name
-        requested_name = original_name
-        store_name_was_provided = False
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail='store_name or original_name is required',
-        )
-
-    meta_path = store_dir / 'meta.json'
-    if not meta_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f'Trace store not found for {requested_name}',
-        )
-    logger.info('Opening existing trace store for %s', store_dir.name)
-    file_id = str(uuid4())
-    reused = trace_store_complete(store_dir, key1_byte, key2_byte)
-    meta = load_trace_store_meta(meta_path)
-    if meta is None:
-        raise HTTPException(
-            status_code=500,
-            detail='Trace store metadata is unreadable',
-        )
-    if store_name_was_provided:
-        ensure_trace_store_meta_key_bytes(
-            meta,
-            key1_byte=key1_byte,
-            key2_byte=key2_byte,
-        )
-    if not reused:
-        segy_path = meta.get('original_segy_path') if isinstance(meta, dict) else None
-        source_sha256 = (
-            meta.get('source_sha256')
-            if isinstance(meta, dict) and isinstance(meta.get('source_sha256'), str)
-            else None
-        )
-        if not isinstance(segy_path, str):
-            raise HTTPException(
-                status_code=500,
-                detail='Trace store incomplete and SEG-Y path unavailable',
-            )
-        meta = await asyncio.to_thread(
-            SegyIngestor.from_segy,
-            segy_path,
-            store_dir,
-            key1_byte,
-            key2_byte,
-            source_sha256=source_sha256,
-        )
-    response_original_name = meta.get('original_name') if isinstance(meta, dict) else None
-    if not isinstance(response_original_name, str) or not response_original_name:
-        response_original_name = original_name or store_dir.name
-    source_sha256 = meta.get('source_sha256') if isinstance(meta, dict) else None
-    register_trace_store(
+    store_name_was_provided = 'store_name' in form
+    return await open_existing_trace_store(
         state=state,
-        file_id=file_id,
-        store_dir=store_dir,
+        trace_dir=TRACE_DIR,
+        original_name=original_name,
+        store_name=store_name,
+        store_name_was_provided=store_name_was_provided,
         key1_byte=key1_byte,
         key2_byte=key2_byte,
-        dt=meta.get('dt') if isinstance(meta, dict) else None,
-        update_registry=True,
-        touch_meta=True,
     )
-    response = {
-        'file_id': file_id,
-        'reused_trace_store': reused,
-        'store_name': store_dir.name,
-        'original_name': response_original_name,
-        'key1_byte': key1_byte,
-        'key2_byte': key2_byte,
-    }
-    if isinstance(source_sha256, str):
-        response['source_sha256'] = source_sha256
-    return response
 
 
 @router.post('/upload_segy')

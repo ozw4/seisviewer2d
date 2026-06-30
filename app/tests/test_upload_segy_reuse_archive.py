@@ -101,7 +101,6 @@ def _upload_env(
                 dt=dt,
             )
 
-    monkeypatch.setattr(upload_mod, 'register_trace_store', _fake_register)
     monkeypatch.setattr(segy_ingest_service, 'register_trace_store', _fake_register)
 
     calls = {'ingest': 0}
@@ -146,9 +145,6 @@ def _upload_env(
         )
         return meta
 
-    monkeypatch.setattr(
-        upload_mod.SegyIngestor, 'from_segy', _fake_from_segy, raising=True
-    )
     monkeypatch.setattr(
         segy_ingest_service.SegyIngestor,
         'from_segy',

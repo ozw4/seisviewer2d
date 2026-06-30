@@ -61,6 +61,7 @@ def _qc_payload() -> dict:
 def _staged_env(tmp_path: Path, monkeypatch):
     from app.api.routers import upload as upload_mod
     from app.services import segy_ingest_service
+    from app.services import segy_open_service
 
     state = app.state.sv
     state.file_registry.clear()
@@ -75,6 +76,7 @@ def _staged_env(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(upload_mod, 'UPLOAD_DIR', upload_root, raising=True)
     monkeypatch.setattr(upload_mod, 'PROCESSED_DIR', processed, raising=True)
     monkeypatch.setattr(upload_mod, 'TRACE_DIR', trace_dir, raising=True)
+
     def _fake_register(
         *,
         state,
@@ -96,8 +98,8 @@ def _staged_env(tmp_path: Path, monkeypatch):
                 dt=dt,
             )
 
-    monkeypatch.setattr(upload_mod, 'register_trace_store', _fake_register)
     monkeypatch.setattr(segy_ingest_service, 'register_trace_store', _fake_register)
+    monkeypatch.setattr(segy_open_service, 'register_trace_store', _fake_register)
 
     calls = {'qc': 0, 'ingest': 0}
 
@@ -145,10 +147,13 @@ def _staged_env(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _fake_qc, raising=True)
     monkeypatch.setattr(
-        upload_mod.SegyIngestor, 'from_segy', _fake_from_segy, raising=True
+        segy_ingest_service.SegyIngestor,
+        'from_segy',
+        _fake_from_segy,
+        raising=True,
     )
     monkeypatch.setattr(
-        segy_ingest_service.SegyIngestor,
+        segy_open_service.SegyIngestor,
         'from_segy',
         _fake_from_segy,
         raising=True,

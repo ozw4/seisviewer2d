@@ -57,6 +57,7 @@ def _write_complete_store(
 def _open_env(tmp_path: Path, monkeypatch):
     """Isolate TRACE_DIR and prevent side-effect threads for /open_segy reuse tests."""
     from app.api.routers import upload as upload_mod
+    from app.services import segy_open_service
 
     app.state.sv.file_registry.clear()
     get_state(app).cached_readers.clear()
@@ -103,7 +104,7 @@ def _open_env(tmp_path: Path, monkeypatch):
         return None
 
     monkeypatch.setattr(
-        upload_mod, 'register_trace_store', _fake_register, raising=True
+        segy_open_service, 'register_trace_store', _fake_register, raising=True
     )
 
     calls: dict[str, int] = {'ingest': 0}
@@ -113,7 +114,10 @@ def _open_env(tmp_path: Path, monkeypatch):
         raise AssertionError('SegyIngestor.from_segy must not be called for reuse path')
 
     monkeypatch.setattr(
-        upload_mod.SegyIngestor, 'from_segy', _should_not_be_called, raising=True
+        segy_open_service.SegyIngestor,
+        'from_segy',
+        _should_not_be_called,
+        raising=True,
     )
 
     client = TestClient(app)
@@ -326,6 +330,8 @@ def test_open_segy_rejects_unsafe_store_name(_open_env, store_name: str):
 def test_open_segy_rebuilds_store_without_split_baseline_artifact(
     _open_env, monkeypatch, baseline_mode: str
 ):
+    from app.services import segy_open_service
+
     client, upload_mod, captured, calls = _open_env
     original_name = 'legacy-no-baseline.segy'
     store_dir = Path(upload_mod.TRACE_DIR) / original_name
@@ -387,7 +393,7 @@ def test_open_segy_rebuilds_store_without_split_baseline_artifact(
         return meta
 
     monkeypatch.setattr(
-        upload_mod.SegyIngestor, 'from_segy', _fake_from_segy, raising=True
+        segy_open_service.SegyIngestor, 'from_segy', _fake_from_segy, raising=True
     )
 
     res = client.post(
