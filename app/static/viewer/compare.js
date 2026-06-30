@@ -119,14 +119,19 @@
       key2Byte: Number.isFinite(key2Byte) ? key2Byte : null,
       isActive: candidate.isActive === true,
       originalName: String(candidate.originalName ?? candidate.original_name ?? '').trim(),
+      storeName: String(candidate.storeName ?? candidate.store_name ?? '').trim(),
+      sourceSha256: String(candidate.sourceSha256 ?? candidate.source_sha256 ?? '').trim(),
     };
   }
 
   function compareTargetDatasetKey(target) {
     const normalized = normalizeCompareFileTarget(target);
     if (!normalized) return '';
+    const keyBytes = `${normalized.key1Byte ?? ''}|${normalized.key2Byte ?? ''}`;
+    if (normalized.sourceSha256) return `sha256:${normalized.sourceSha256}|${keyBytes}`;
+    if (normalized.storeName) return `store:${normalized.storeName}|${keyBytes}`;
     const name = String(normalized.originalName || normalized.displayName || '').trim();
-    return `${name}|${normalized.key1Byte ?? ''}|${normalized.key2Byte ?? ''}`;
+    return `name:${name}|${keyBytes}`;
   }
 
   function activeCompareFileTarget() {
@@ -137,6 +142,8 @@
       key2Byte: window.currentKey2Byte,
       isActive: true,
       originalName: window.currentFileName || '',
+      storeName: '',
+      sourceSha256: '',
     });
   }
 
@@ -249,7 +256,19 @@
     return compareFileTargets;
   }
 
-  function rawCompareSource(target) {
+  function compareTargetLabelName(target, displayNameCounts, displayNameSeen) {
+    const displayName = target.displayName;
+    if ((displayNameCounts.get(displayName) || 0) <= 1) return displayName;
+    const seen = displayNameSeen.get(displayName) || 0;
+    displayNameSeen.set(displayName, seen + 1);
+    if (seen === 0) return displayName;
+    const suffix = target.sourceSha256
+      ? target.sourceSha256.slice(0, 8)
+      : String(target.storeName || target.fileId || '').slice(0, 12);
+    return suffix ? `${displayName} [${suffix}]` : displayName;
+  }
+
+  function rawCompareSource(target, labelName = target.displayName) {
     const sourceId = compareSourceId(target.fileId, 'raw');
     return {
       role: null,
@@ -260,7 +279,7 @@
       key1Byte: target.key1Byte,
       key2Byte: target.key2Byte,
       layerId: 'raw',
-      label: `${target.displayName} / raw`,
+      label: `${labelName} / raw`,
       pipelineKey: null,
       tapLabel: null,
       domain: 'amplitude',
@@ -291,11 +310,19 @@
     const catalog = [];
     const seen = new Set();
     const layerValues = Array.isArray(options.layerValues) ? options.layerValues : ['raw'];
-    for (const candidate of targets || []) {
-      const target = normalizeCompareFileTarget(candidate);
+    const normalizedTargets = (targets || [])
+      .map(normalizeCompareFileTarget)
+      .filter(Boolean);
+    const displayNameCounts = new Map();
+    for (const target of normalizedTargets) {
+      displayNameCounts.set(target.displayName, (displayNameCounts.get(target.displayName) || 0) + 1);
+    }
+    const displayNameSeen = new Map();
+    for (const target of normalizedTargets) {
       if (!target || seen.has(target.fileId)) continue;
       seen.add(target.fileId);
-      catalog.push(rawCompareSource(target));
+      const labelName = compareTargetLabelName(target, displayNameCounts, displayNameSeen);
+      catalog.push(rawCompareSource(target, labelName));
       if (!target.isActive) continue;
       for (const layer of layerValues) {
         const tapLabel = String(layer || '').trim();
@@ -318,13 +345,15 @@
     if (!candidate || typeof candidate !== 'object') return null;
     const originalName = String(candidate.original_name ?? candidate.originalName ?? '').trim();
     if (!originalName) return null;
-    const storeName = String(candidate.store_name ?? candidate.storeName ?? originalName).trim();
+    const storeName = String(candidate.store_name ?? candidate.storeName ?? '').trim();
+    const sourceSha256 = String(candidate.source_sha256 ?? candidate.sourceSha256 ?? '').trim();
     const key1Byte = Number(candidate.key1_byte ?? candidate.key1Byte);
     const key2Byte = Number(candidate.key2_byte ?? candidate.key2Byte);
     if (!Number.isFinite(key1Byte) || !Number.isFinite(key2Byte)) return null;
     return {
       originalName,
       storeName,
+      sourceSha256,
       key1Byte,
       key2Byte,
     };
@@ -333,8 +362,9 @@
   function compareRecentDatasetValue(candidate) {
     const dataset = normalizeRecentDataset(candidate);
     if (!dataset) return '';
+    const prefix = dataset.storeName ? `store:${encodeURIComponent(dataset.storeName)}` : `name:${encodeURIComponent(dataset.originalName)}`;
     return [
-      encodeURIComponent(dataset.originalName),
+      prefix,
       dataset.key1Byte,
       dataset.key2Byte,
     ].join('|');
@@ -702,6 +732,8 @@
       fileId: 'candidate',
       displayName: dataset.originalName,
       originalName: dataset.originalName,
+      storeName: dataset.storeName,
+      sourceSha256: dataset.sourceSha256,
       key1Byte: active.key1Byte,
       key2Byte: active.key2Byte,
     });
@@ -710,6 +742,7 @@
       return false;
     }
     const formData = new FormData();
+    if (dataset.storeName) formData.append('store_name', dataset.storeName);
     formData.append('original_name', dataset.originalName);
     formData.append('key1_byte', String(active.key1Byte));
     formData.append('key2_byte', String(active.key2Byte));
@@ -723,6 +756,8 @@
         key1Byte: active.key1Byte,
         key2Byte: active.key2Byte,
         originalName: dataset.originalName,
+        storeName: dataset.storeName,
+        sourceSha256: dataset.sourceSha256,
         isActive: false,
       }, active);
       compareFileTargets = result.targets;
@@ -1726,6 +1761,7 @@
     resolveSourceDomain,
     sourcePairKey,
     normalizeCompareFileTarget,
+    compareTargetDatasetKey,
     normalizeRecentDataset,
     compareRecentDatasetValue,
     resolveCompareRecentDataset,
@@ -1741,9 +1777,14 @@
       compareActiveTargetKey = compareTargetIdentity(compareFileTargets[0]);
       window.compareFileTargets = compareFileTargets;
     },
+    setCompareRecentDatasetsForTest: (datasets) => {
+      compareRecentDatasets = Array.isArray(datasets) ? datasets : [];
+      renderCompareDatasetPicker();
+    },
     clearRawCompareValidationCache,
     compareUnavailableMessage,
     buildCompareRequest,
+    addSelectedCompareDataset,
     addCompareDatasetTarget,
     clearCompareDatasetTargets,
     resetCompareTargetsForActive,

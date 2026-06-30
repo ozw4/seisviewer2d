@@ -16,6 +16,7 @@ beforeEach(() => {
 afterEach(() => {
   window.__svCompare.setLatestCompareRenderForTest(null);
   window.__svCompare.setCompareFileTargetsForTest([]);
+  window.__svCompare.setCompareRecentDatasetsForTest([]);
   window.__svCompare.clearRawCompareValidationCache();
   delete window.buildWindowRequestArtifacts;
   vi.unstubAllGlobals();
@@ -632,6 +633,59 @@ test('raw source unavailable message does not use tap pipeline wording', () => {
   expect(message).not.toMatch(/Run pipeline first|tap/i);
 });
 
+test('normalizeCompareFileTarget reads store and source hash fields', () => {
+  expect(window.__svCompare.normalizeCompareFileTarget({
+    file_id: 'file-1',
+    file_name: 'line.sgy',
+    key1_byte: 189,
+    key2_byte: 193,
+    original_name: 'line.sgy',
+    store_name: 'stores/a.sgy',
+    source_sha256: 'abcdef1234567890',
+  })).toMatchObject({
+    fileId: 'file-1',
+    displayName: 'line.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+    originalName: 'line.sgy',
+    storeName: 'stores/a.sgy',
+    sourceSha256: 'abcdef1234567890',
+  });
+
+  expect(window.__svCompare.normalizeCompareFileTarget({
+    fileId: 'file-2',
+    displayName: 'line.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+    storeName: 'stores/b.sgy',
+    sourceSha256: 'fedcba0987654321',
+  })).toMatchObject({
+    storeName: 'stores/b.sgy',
+    sourceSha256: 'fedcba0987654321',
+  });
+});
+
+test('compareTargetDatasetKey prefers source hash for duplicate identity', () => {
+  const base = {
+    fileId: 'file-1',
+    displayName: 'line.sgy',
+    originalName: 'line.sgy',
+    storeName: 'stores/a.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+  };
+
+  expect(window.__svCompare.compareTargetDatasetKey({
+    ...base,
+    sourceSha256: 'abcdef1234567890',
+  })).toBe('sha256:abcdef1234567890|189|193');
+  expect(window.__svCompare.compareTargetDatasetKey(base)).toBe('store:stores/a.sgy|189|193');
+  expect(window.__svCompare.compareTargetDatasetKey({
+    ...base,
+    storeName: '',
+  })).toBe('name:line.sgy|189|193');
+});
+
 test('compare recent dataset selection includes key-byte identity', () => {
   const datasets = [
     { original_name: 'line.sgy', store_name: 'a', key1_byte: 189, key2_byte: 193 },
@@ -639,6 +693,7 @@ test('compare recent dataset selection includes key-byte identity', () => {
   ];
   const selectedValue = window.__svCompare.compareRecentDatasetValue({
     originalName: 'line.sgy',
+    storeName: 'b',
     key1Byte: 17,
     key2Byte: 193,
   });
@@ -650,11 +705,21 @@ test('compare recent dataset selection includes key-byte identity', () => {
     key1Byte: 17,
     key2Byte: 193,
   });
+  expect(selectedValue).toBe('store:b|17|193');
   expect(selectedValue).not.toEqual(window.__svCompare.compareRecentDatasetValue({
     originalName: 'line.sgy',
+    storeName: 'a',
     key1Byte: 189,
     key2Byte: 193,
   }));
+});
+
+test('compareRecentDatasetValue falls back to original name for old recent responses', () => {
+  expect(window.__svCompare.compareRecentDatasetValue({
+    originalName: 'line.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+  })).toBe('name:line.sgy|189|193');
 });
 
 test('compare source catalog builds active raw source with file metadata', () => {
@@ -744,6 +809,129 @@ test('compare dataset target list keeps active target and added raw target', () 
   expect(catalog.map((source) => source.label)).toContain('active.sgy / raw');
   expect(catalog.map((source) => source.label)).toContain('added.sgy / raw');
   expect(catalog.find((source) => source.fileId === 'added-file-id' && source.layerId !== 'raw')).toBeUndefined();
+});
+
+test('compare dataset manager allows same basename with different hashes and dedupes same hash', () => {
+  const active = {
+    fileId: 'active-file-id',
+    displayName: 'active.sgy',
+    originalName: 'active.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+    isActive: true,
+  };
+
+  const first = window.__svCompare.addCompareDatasetTarget([], {
+    fileId: 'added-file-a',
+    displayName: 'line.sgy',
+    originalName: 'line.sgy',
+    sourceSha256: 'aaaaaaaa11111111',
+    key1Byte: 189,
+    key2Byte: 193,
+  }, active);
+  const second = window.__svCompare.addCompareDatasetTarget(first.targets, {
+    fileId: 'added-file-b',
+    displayName: 'line.sgy',
+    originalName: 'line.sgy',
+    sourceSha256: 'bbbbbbbb22222222',
+    key1Byte: 189,
+    key2Byte: 193,
+  }, active);
+  const duplicate = window.__svCompare.addCompareDatasetTarget(second.targets, {
+    fileId: 'added-file-c',
+    displayName: 'line.sgy',
+    originalName: 'line.sgy',
+    sourceSha256: 'bbbbbbbb22222222',
+    key1Byte: 189,
+    key2Byte: 193,
+  }, active);
+
+  expect(first.added).toBe(true);
+  expect(second.added).toBe(true);
+  expect(second.targets.map((target) => target.fileId)).toEqual([
+    'active-file-id',
+    'added-file-a',
+    'added-file-b',
+  ]);
+  expect(duplicate.added).toBe(false);
+  expect(duplicate.reason).toMatch(/already added/i);
+  expect(duplicate.targets).toHaveLength(3);
+});
+
+test('compare source catalog distinguishes same display names with hash suffix', () => {
+  const catalog = window.__svCompare.buildCompareSourceCatalog([
+    {
+      fileId: 'active-file',
+      displayName: 'line.sgy',
+      originalName: 'line.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: true,
+    },
+    {
+      fileId: 'added-file',
+      displayName: 'line.sgy',
+      originalName: 'line.sgy',
+      sourceSha256: 'abcdef1234567890',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: false,
+    },
+  ], {
+    layerValues: ['raw', 'fbpick_prob'],
+    latestPipelineKey: 'pipeline-1',
+  });
+
+  expect(catalog.map((source) => source.label)).toEqual([
+    'line.sgy / raw',
+    'line.sgy / fbpick_prob',
+    'line.sgy [abcdef12] / raw',
+  ]);
+  expect(catalog.find((source) => source.fileId === 'added-file' && source.tapLabel)).toBeUndefined();
+});
+
+test('addSelectedCompareDataset sends store_name to open_segy', async () => {
+  document.body.innerHTML = `
+    <select id="compareDatasetPicker"></select>
+    <select id="compareSourceA"></select>
+    <select id="compareSourceB"></select>
+    <select id="layerSelect"><option value="raw" selected>raw</option></select>
+    <div id="compareStatus" hidden></div>
+  `;
+  vi.stubGlobal('currentFileId', 'active-file');
+  vi.stubGlobal('currentFileName', 'active.sgy');
+  vi.stubGlobal('currentKey1Byte', 189);
+  vi.stubGlobal('currentKey2Byte', 193);
+  const fetch = vi.fn(async () => okJson({ file_id: 'opened-file' }));
+  vi.stubGlobal('fetch', fetch);
+
+  window.__svCompare.setCompareRecentDatasetsForTest([
+    {
+      original_name: 'line.sgy',
+      store_name: 'store/line-b.sgy',
+      source_sha256: 'abcdef1234567890',
+      key1_byte: 189,
+      key2_byte: 193,
+    },
+  ]);
+
+  const added = await window.__svCompare.addSelectedCompareDataset();
+
+  expect(added).toBe(true);
+  expect(fetch).toHaveBeenCalledWith('/open_segy', expect.objectContaining({ method: 'POST' }));
+  const formData = fetch.mock.calls[0][1].body;
+  expect(formData.get('store_name')).toBe('store/line-b.sgy');
+  expect(formData.get('original_name')).toBe('line.sgy');
+  expect(window.compareFileTargets).toMatchObject([
+    { fileId: 'active-file', isActive: true },
+    {
+      fileId: 'opened-file',
+      originalName: 'line.sgy',
+      storeName: 'store/line-b.sgy',
+      sourceSha256: 'abcdef1234567890',
+      isActive: false,
+    },
+  ]);
 });
 
 test('compare dataset manager rejects mismatched key bytes', () => {
