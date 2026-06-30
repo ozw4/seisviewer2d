@@ -616,6 +616,89 @@ async def upload_segy(
     )
 
 
+@router.post('/compare/raw/import')
+async def import_compare_raw(
+    request: Request,
+    file: Annotated[UploadFile, File(...)],
+    key1_byte: Annotated[int, Form(...)],
+    key2_byte: Annotated[int, Form(...)],
+):
+    state = get_state(request.app)
+    cleanup_staged_uploads(state)
+    if not file.filename:
+        raise HTTPException(
+            status_code=400, detail='Uploaded file must have a filename'
+        )
+    if key1_byte == key2_byte:
+        raise HTTPException(
+            status_code=400,
+            detail='key1_byte and key2_byte must be different',
+        )
+
+    staged_id = uuid4().hex
+    safe_name = _safe_upload_name(file.filename)
+    raw_path = _staged_upload_dir() / staged_id / safe_name
+    saved: SavedUpload | None = None
+    try:
+        saved = await _save_upload_file(file, safe_name, raw_path=raw_path)
+        try:
+            header_qc = await asyncio.to_thread(inspect_segy_header_qc, saved.raw_path)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=422,
+                detail=f'Unable to inspect SEG-Y headers: {exc}',
+            ) from exc
+        header_qc_summary = _selected_header_qc_summary(
+            header_qc,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+        )
+        if header_qc_summary is None:
+            raise HTTPException(
+                status_code=422,
+                detail='Unable to summarize selected SEG-Y headers',
+            )
+
+        durable_raw_path = _promote_staged_segy_to_raw(
+            staged_path=saved.raw_path,
+            safe_name=safe_name,
+            source_sha256=saved.source_sha256,
+        )
+        store_name = _content_addressed_compare_store_name(
+            safe_name=safe_name,
+            source_sha256=saved.source_sha256,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+        )
+        result = await _ingest_saved_segy(
+            request=request,
+            original_name=saved.original_name,
+            safe_name=safe_name,
+            raw_path=durable_raw_path,
+            source_sha256=saved.source_sha256,
+            source_size=saved.source_size,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            store_name=store_name,
+            allow_archive_existing=False,
+        )
+        return {
+            'file_id': result['file_id'],
+            'display_name': saved.original_name,
+            'original_name': saved.original_name,
+            'safe_name': safe_name,
+            'store_name': result['store_name'],
+            'source_sha256': saved.source_sha256,
+            'source_size': saved.source_size,
+            'key1_byte': key1_byte,
+            'key2_byte': key2_byte,
+            'reused_trace_store': result['reused_trace_store'],
+            'header_qc': header_qc_summary,
+        }
+    finally:
+        _cleanup_staged_upload(saved.raw_path if saved is not None else raw_path)
+
+
 @router.post('/stage_segy')
 async def stage_segy(
     request: Request,
