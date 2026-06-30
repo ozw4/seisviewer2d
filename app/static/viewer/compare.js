@@ -715,6 +715,7 @@
   }
 
   function clearCompareDatasets() {
+    clearRawCompareValidationCache();
     compareFileTargets = clearCompareDatasetTargets(compareFileTargets, activeCompareFileTarget());
     window.compareFileTargets = compareFileTargets;
     setCompareStatus('');
@@ -1260,8 +1261,16 @@
   }
 
   function compareUnavailableMessage(sources) {
-    if (!sources.a.available) return 'A-B unavailable: A tap is not available. Run pipeline first.';
-    if (!sources.b.available) return 'A-B unavailable: B tap is not available. Run pipeline first.';
+    if (!sources.a.available) {
+      return isRawCompareSource(sources.a)
+        ? 'A-B unavailable: A raw source is not available.'
+        : 'A-B unavailable: A tap is not available. Run pipeline first.';
+    }
+    if (!sources.b.available) {
+      return isRawCompareSource(sources.b)
+        ? 'A-B unavailable: B raw source is not available.'
+        : 'A-B unavailable: B tap is not available. Run pipeline first.';
+    }
     if (compareShowDiffEnabled() && sources.a.domain !== sources.b.domain) {
       return 'A-B unavailable: source domains are different.';
     }
@@ -1315,6 +1324,7 @@
         return true;
       }
       if (!rawValidation.ok) {
+        clearCompareRender();
         if (setCompareStatusIfCurrent(
           requestId,
           rawValidation.message || 'A-B unavailable: raw source grids are different.',
@@ -1374,7 +1384,9 @@
         const role = err.source?.role === 'A' ? 'A' : 'B';
         if (isCompareRequestCurrent(requestId)) {
           if (err.status === 409) {
-            setCompareStatus(`A-B unavailable: ${role} tap is not available. Run pipeline first.`);
+            setCompareStatus(isRawCompareSource(err.source)
+              ? err.message
+              : `A-B unavailable: ${role} tap is not available. Run pipeline first.`);
           } else {
             setCompareStatus(err.message);
           }
@@ -1582,8 +1594,10 @@
     compareRecentDatasetValue,
     resolveCompareRecentDataset,
     resolveCompareNormalizationFileId,
+    rawCompareValidationKey,
     validateRawCompareSources,
     clearRawCompareValidationCache,
+    compareUnavailableMessage,
     buildCompareRequest,
     addCompareDatasetTarget,
     clearCompareDatasetTargets,

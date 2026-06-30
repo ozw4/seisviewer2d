@@ -258,6 +258,102 @@ test('raw compare validation calls backend for distinct raw file sources', async
   expect(url.searchParams.get('key2_byte')).toBe('193');
 });
 
+test('raw compare validation cache key includes file ids and key bytes', () => {
+  const sources = {
+    a: { id: 'raw', layerId: 'raw', fileId: 'file-a' },
+    b: { id: 'raw', layerId: 'raw', fileId: 'file-b' },
+  };
+
+  expect(window.__svCompare.rawCompareValidationKey(sources, 189, 193)).not.toBe(
+    window.__svCompare.rawCompareValidationKey({
+      a: { id: 'raw', layerId: 'raw', fileId: 'file-a' },
+      b: { id: 'raw', layerId: 'raw', fileId: 'file-c' },
+    }, 189, 193),
+  );
+  expect(window.__svCompare.rawCompareValidationKey(sources, 189, 193)).not.toBe(
+    window.__svCompare.rawCompareValidationKey(sources, 17, 193),
+  );
+  expect(window.__svCompare.rawCompareValidationKey(sources, 189, 193)).not.toBe(
+    window.__svCompare.rawCompareValidationKey(sources, 189, 197),
+  );
+});
+
+test('raw compare validation caches ok=true by source pair and key bytes', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    headers: { get: () => 'application/json' },
+    json: async () => ({ ok: true, reason: '', message: '' }),
+  }));
+  vi.stubGlobal('fetch', fetchMock);
+  const sources = {
+    a: { id: 'raw', layerId: 'raw', fileId: 'file-a', key1Byte: 189, key2Byte: 193 },
+    b: { id: 'raw', layerId: 'raw', fileId: 'file-b', key1Byte: 189, key2Byte: 193 },
+  };
+
+  await window.__svCompare.validateRawCompareSources(sources);
+  await window.__svCompare.validateRawCompareSources(sources);
+  await window.__svCompare.validateRawCompareSources({
+    a: { ...sources.a, key1Byte: 17 },
+    b: { ...sources.b, key1Byte: 17 },
+  });
+
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+test('raw compare validation ok=false returns backend message for caller to stop fetch', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    headers: { get: () => 'application/json' },
+    json: async () => ({
+      ok: false,
+      reason: 'key2_sequence',
+      message: 'A-B unavailable: key2 sequence differs.',
+    }),
+  }));
+  vi.stubGlobal('fetch', fetchMock);
+
+  const result = await window.__svCompare.validateRawCompareSources({
+    a: { id: 'raw', layerId: 'raw', fileId: 'file-a', key1Byte: 189, key2Byte: 193 },
+    b: { id: 'raw', layerId: 'raw', fileId: 'file-b', key1Byte: 189, key2Byte: 193 },
+  });
+
+  expect(result).toMatchObject({
+    ok: false,
+    reason: 'key2_sequence',
+    message: 'A-B unavailable: key2 sequence differs.',
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test('buildComparePanels uses file names in raw diff label', () => {
+  const panels = window.__svCompare.buildComparePanels({
+    sources: {
+      a: { domain: 'amplitude', label: 'line_a.sgy / raw' },
+      b: { domain: 'amplitude', label: 'line_b.sgy / raw' },
+    },
+    a: { values: new Float32Array([1]) },
+    b: { values: new Float32Array([2]) },
+    diffAvailable: true,
+    diffValues: new Float32Array([-1]),
+  });
+
+  expect(panels.map((panel) => panel.label)).toEqual([
+    'line_a.sgy / raw',
+    'line_b.sgy / raw',
+    'line_a.sgy / raw - line_b.sgy / raw',
+  ]);
+});
+
+test('raw source unavailable message does not use tap pipeline wording', () => {
+  const message = window.__svCompare.compareUnavailableMessage({
+    a: { id: 'raw', layerId: 'raw', available: false, domain: 'amplitude' },
+    b: { id: 'raw', layerId: 'raw', available: true, domain: 'amplitude' },
+  });
+
+  expect(message).toBe('A-B unavailable: A raw source is not available.');
+  expect(message).not.toMatch(/Run pipeline first|tap/i);
+});
+
 test('compare recent dataset selection includes key-byte identity', () => {
   const datasets = [
     { original_name: 'line.sgy', store_name: 'a', key1_byte: 189, key2_byte: 193 },
