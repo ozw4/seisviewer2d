@@ -59,6 +59,24 @@ test('catalog exposes active raw source and available tap sources', () => {
   ]);
 });
 
+test('resolveSourceDomain defaults to latest tap data for exported callers', () => {
+  const hadLatestTapData = Object.prototype.hasOwnProperty.call(window, 'latestTapData');
+  const previousLatestTapData = window.latestTapData;
+  window.latestTapData = {
+    fbpick: { meta: { domain: 'probability' } },
+  };
+
+  try {
+    expect(sources().resolveSourceDomain('fbpick')).toBe('probability');
+  } finally {
+    if (hadLatestTapData) {
+      window.latestTapData = previousLatestTapData;
+    } else {
+      delete window.latestTapData;
+    }
+  }
+});
+
 test('duplicate display labels get hash, store, or file suffixes', () => {
   const catalog = sources().buildCompareSourceCatalog({
     targets: [

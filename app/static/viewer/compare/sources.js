@@ -117,7 +117,7 @@
     return catalog;
   }
 
-  function resolveSourceDomain(sourceId, tapDataByLabel = {}) {
+  function resolveSourceDomain(sourceId, tapDataByLabel = window.latestTapData) {
     if (!sourceId || sourceId === 'raw') return 'amplitude';
     const tapData = tapDataByLabel && tapDataByLabel[sourceId];
     if (tapData && typeof tapData === 'object') {
