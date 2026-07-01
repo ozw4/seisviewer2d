@@ -2,6 +2,7 @@
   const compareModels = window.__svCompareModels || {};
   const compareSources = window.__svCompareSources || {};
   const compareData = window.__svCompareData || {};
+  const compareRender = window.__svCompareRender || {};
   const {
     compareSourceId,
     normalizeCompareFileTarget,
@@ -22,7 +23,6 @@
     rawCompareValidationKey,
   } = compareSources;
   const {
-    payloadDt,
     payloadShapeInfo,
     payloadInvScale,
     payloadHasComputeValues,
@@ -33,9 +33,18 @@
     sameGrid,
     validateComparePair,
     subtractF32,
-    rowsFromF32,
     compareHeatmapScale,
   } = compareData;
+  const {
+    axisSuffix,
+    axisLayoutName,
+    buildCompareLayout,
+    buildCompareWiggleTraces,
+    buildCompareHeatmapTrace,
+    buildComparePanels: buildComparePanelModels,
+    buildCompareRender: buildCompareRenderModel,
+    buildCompareUnavailableFigure,
+  } = compareRender;
 
   for (const helper of [
     compareSourceId,
@@ -65,7 +74,6 @@
     }
   }
   for (const helper of [
-    payloadDt,
     payloadShapeInfo,
     payloadInvScale,
     payloadHasComputeValues,
@@ -76,16 +84,27 @@
     sameGrid,
     validateComparePair,
     subtractF32,
-    rowsFromF32,
     compareHeatmapScale,
   ]) {
     if (typeof helper !== 'function') {
       throw new Error('compare/data.js must be loaded before compare.js');
     }
   }
+  for (const helper of [
+    axisSuffix,
+    axisLayoutName,
+    buildCompareLayout,
+    buildCompareWiggleTraces,
+    buildCompareHeatmapTrace,
+    buildComparePanelModels,
+    buildCompareRenderModel,
+    buildCompareUnavailableFigure,
+  ]) {
+    if (typeof helper !== 'function') {
+      throw new Error('compare/render.js must be loaded before compare.js');
+    }
+  }
 
-  const AXIS_MARGIN = 0.035;
-  const AMP_LIMIT = 3.0;
   const COMPARE_CACHE_PURPOSE = 'compare';
   const COMPARE_RENDER_SLOT = 'compare-window';
   const SECTION_RENDER_SLOT = 'section-window';
@@ -799,239 +818,49 @@
     return payload;
   }
 
-  function axisSuffix(index) {
-    return index === 0 ? '' : String(index + 1);
+  function currentCompareGain() {
+    return parseFloat(document.getElementById('gain')?.value) || 1.0;
   }
 
-  function axisRef(base, index) {
-    return index === 0 ? base : `${base}${index + 1}`;
+  function buildComparePanelsForCurrentState(render) {
+    return buildComparePanelModels({
+      render,
+      showDiff: compareShowDiffEnabled(),
+    });
   }
 
-  function axisLayoutName(base, index) {
-    return `${base}axis${axisSuffix(index)}`;
-  }
-
-  function compareDomains(count) {
-    const gapTotal = AXIS_MARGIN * Math.max(0, count - 1);
-    const panelWidth = (1 - gapTotal) / count;
-    const domains = [];
-    let start = 0;
-    for (let i = 0; i < count; i++) {
-      const end = i === count - 1 ? 1 : start + panelWidth;
-      domains.push([start, end]);
-      start = end + AXIS_MARGIN;
-    }
-    return domains;
-  }
-
-  function panelTitle(panel) {
-    if (panel.kind === 'diff') return `A-B: ${panel.left} - ${panel.right}`;
-    return `${panel.role}: ${panel.label}`;
-  }
-
-  function buildCompareLayout(render, panels, xRange, yRange) {
-    const domains = compareDomains(panels.length);
-    const dt = Number(payloadDt(render.a.payload)) || Number(window.defaultDt ?? defaultDt) || 0;
-    const yDefault = [(render.windowInfo.y1 * dt), (render.windowInfo.y0 * dt)];
-    const layout = {
+  function buildCompareLayoutForCurrentState(render, panels, xRange, yRange) {
+    return buildCompareLayout({
+      render,
+      panels,
+      xRange,
+      yRange,
       clickmode: clickModeForCurrentState(),
       dragmode: effectiveDragMode(),
-      uirevision: `${currentUiRevision()}:compare:${sourcePairKey(render.sources)}`,
-      paper_bgcolor: '#fff',
-      plot_bgcolor: '#fff',
-      margin: { t: 38, r: 12, l: 58, b: 42 },
-      annotations: [],
-      showlegend: false,
-    };
-    for (let i = 0; i < panels.length; i++) {
-      const xName = axisLayoutName('x', i);
-      const yName = axisLayoutName('y', i);
-      layout[xName] = {
-        domain: domains[i],
-        title: 'Trace',
-        showgrid: false,
-        tickfont: { color: '#000' },
-        titlefont: { color: '#000' },
-        autorange: false,
-        range: xRange || [render.windowInfo.x0, render.windowInfo.x1],
-      };
-      layout[yName] = {
-        domain: [0, 1],
-        title: i === 0 ? 'Time (s)' : '',
-        showgrid: false,
-        tickfont: { color: '#000' },
-        titlefont: { color: '#000' },
-        autorange: false,
-        range: yRange || yDefault,
-      };
-      layout.annotations.push({
-        xref: 'paper',
-        yref: 'paper',
-        x: (domains[i][0] + domains[i][1]) / 2,
-        y: 1.06,
-        xanchor: 'center',
-        yanchor: 'bottom',
-        showarrow: false,
-        text: panelTitle(panels[i]),
-        font: { size: 13, color: '#111827' },
-      });
-    }
-    return layout;
+      uiRevision: currentUiRevision(),
+    });
   }
 
-  function buildCompareWiggleTraces(panel, axisIndex, render) {
-    const { rows, cols, x0, stepX, y0, stepY } = render;
-    const values = panel.values;
-    const dt = Number(payloadDt(render.a.payload)) || Number(window.defaultDt ?? defaultDt) || 0;
-    const gain = parseFloat(document.getElementById('gain')?.value) || 1.0;
-    const lineSegLen = rows + 1;
-    const fillSegLen = (2 * rows) + 2;
-    const baseX = new Float32Array(cols * lineSegLen);
-    const baseY = new Float32Array(cols * lineSegLen);
-    const lineX = new Float32Array(cols * lineSegLen);
-    const lineY = new Float32Array(cols * lineSegLen);
-    const fillX = new Float32Array(cols * fillSegLen);
-    const fillY = new Float32Array(cols * fillSegLen);
-    for (let c = 0; c < cols; c++) {
-      const traceIndex = x0 + c * stepX;
-      const lineStart = c * lineSegLen;
-      const fillStart = c * fillSegLen;
-      for (let r = 0; r < rows; r++) {
-        const t = (y0 + r * stepY) * dt;
-        const idx = r * cols + c;
-        let val = values[idx] * gain;
-        if (val > AMP_LIMIT) val = AMP_LIMIT;
-        if (val < -AMP_LIMIT) val = -AMP_LIMIT;
-        const posVal = val < 0 ? 0 : val;
-        const lineIdx = lineStart + r;
-        const fillBaseIdx = fillStart + r;
-        const fillPosIdx = fillStart + rows + (rows - 1 - r);
-        baseX[lineIdx] = traceIndex;
-        baseY[lineIdx] = t;
-        lineX[lineIdx] = traceIndex + val;
-        lineY[lineIdx] = t;
-        fillX[fillBaseIdx] = traceIndex;
-        fillY[fillBaseIdx] = t;
-        fillX[fillPosIdx] = traceIndex + posVal;
-        fillY[fillPosIdx] = t;
-      }
-      const lineNanIdx = lineStart + rows;
-      baseX[lineNanIdx] = NaN;
-      baseY[lineNanIdx] = NaN;
-      lineX[lineNanIdx] = NaN;
-      lineY[lineNanIdx] = NaN;
-      const fillCloseIdx = fillStart + (2 * rows);
-      const fillNanIdx = fillCloseIdx + 1;
-      fillX[fillCloseIdx] = traceIndex;
-      fillY[fillCloseIdx] = (y0 * dt);
-      fillX[fillNanIdx] = NaN;
-      fillY[fillNanIdx] = NaN;
-    }
-    const xaxis = axisRef('x', axisIndex);
-    const yaxis = axisRef('y', axisIndex);
-    return [
-      {
-        type: 'scatter',
-        mode: 'lines',
-        x: baseX,
-        y: baseY,
-        xaxis,
-        yaxis,
-        line: { width: 0 },
-        connectgaps: false,
-        hoverinfo: 'skip',
-        showlegend: false,
-      },
-      {
-        type: 'scatter',
-        mode: 'lines',
-        x: fillX,
-        y: fillY,
-        xaxis,
-        yaxis,
-        fill: 'toself',
-        fillcolor: 'black',
-        line: { width: 0 },
-        opacity: 0.6,
-        connectgaps: false,
-        hoverinfo: 'skip',
-        showlegend: false,
-      },
-      {
-        type: 'scatter',
-        mode: 'lines',
-        x: lineX,
-        y: lineY,
-        xaxis,
-        yaxis,
-        line: { color: 'black', width: 0.5 },
-        connectgaps: false,
-        hoverinfo: 'x+y',
-        showlegend: false,
-      },
-    ];
+  function buildCompareWiggleTracesForCurrentState(panel, axisIndex, render) {
+    return buildCompareWiggleTraces({
+      panel,
+      axisIndex,
+      render,
+      gain: currentCompareGain(),
+    });
   }
 
-  function buildCompareHeatmapTrace(panel, axisIndex, render) {
-    const { rows, cols, x0, stepX, y0, stepY } = render;
-    const xVals = new Float32Array(cols);
-    for (let c = 0; c < cols; c++) xVals[c] = x0 + c * stepX;
-    const dt = Number(payloadDt(render.a.payload)) || Number(window.defaultDt ?? defaultDt) || 0;
-    const yVals = new Float32Array(rows);
-    for (let r = 0; r < rows; r++) yVals[r] = (y0 + r * stepY) * dt;
-    const gain = parseFloat(document.getElementById('gain')?.value) || 1.0;
-    const cmName = document.getElementById('colormap')?.value || 'Greys';
-    const reverse = !!document.getElementById('cmReverse')?.checked;
-    const cm = (window.COLORMAPS && window.COLORMAPS[cmName]) || 'Greys';
-    const scale = compareHeatmapScale(panel, gain);
-    const isDiv = scale.signed && (cmName === 'RdBu' || cmName === 'BWR');
-    return {
-      type: 'heatmap',
-      x: xVals,
-      y: yVals,
-      z: rowsFromF32(panel.values, rows, cols),
-      xaxis: axisRef('x', axisIndex),
-      yaxis: axisRef('y', axisIndex),
-      colorscale: cm,
-      reversescale: reverse,
-      zmin: scale.zmin,
-      zmax: scale.zmax,
-      zmid: isDiv ? 0 : null,
-      showscale: false,
-      hoverinfo: 'x+y',
-      hovertemplate: '',
-    };
-  }
-
-  function buildComparePanels(render) {
-    const panels = [
-      {
-        kind: 'source',
-        role: 'A',
-        domain: render.sources.a.domain,
-        label: render.sources.a.label,
-        values: render.a.values,
-      },
-      {
-        kind: 'source',
-        role: 'B',
-        domain: render.sources.b.domain,
-        label: render.sources.b.label,
-        values: render.b.values,
-      },
-    ];
-    if (compareShowDiffEnabled() && render.diffAvailable && render.diffValues) {
-      panels.push({
-        kind: 'diff',
-        role: 'A-B',
-        domain: render.sources.a.domain,
-        label: `${render.sources.a.label} - ${render.sources.b.label}`,
-        left: render.sources.a.label,
-        right: render.sources.b.label,
-        values: render.diffValues,
-      });
-    }
-    return panels;
+  function buildCompareHeatmapTraceForCurrentState(panel, axisIndex, render) {
+    const colormapName = document.getElementById('colormap')?.value || 'Greys';
+    return buildCompareHeatmapTrace({
+      panel,
+      axisIndex,
+      render,
+      gain: currentCompareGain(),
+      colormapName,
+      reverse: !!document.getElementById('cmReverse')?.checked,
+      colormaps: window.COLORMAPS,
+    });
   }
 
   function renderCompareLatestView() {
@@ -1053,7 +882,7 @@
 
     const plotDiv = document.getElementById('plot');
     if (!plotDiv) return false;
-    const panels = buildComparePanels(render);
+    const panels = buildComparePanelsForCurrentState(render);
     if (
       Number.isInteger(render.__requestId) &&
       !isCompareRequestCurrent(render.__requestId)
@@ -1071,10 +900,10 @@
     const yRange = savedYRange || null;
     const traces = [];
     for (let i = 0; i < panels.length; i++) {
-      if (render.mode === 'wiggle') traces.push(...buildCompareWiggleTraces(panels[i], i, render));
-      else traces.push(buildCompareHeatmapTrace(panels[i], i, render));
+      if (render.mode === 'wiggle') traces.push(...buildCompareWiggleTracesForCurrentState(panels[i], i, render));
+      else traces.push(buildCompareHeatmapTraceForCurrentState(panels[i], i, render));
     }
-    const layout = buildCompareLayout(render, panels, xRange, yRange);
+    const layout = buildCompareLayoutForCurrentState(render, panels, xRange, yRange);
     if (
       Number.isInteger(render.__requestId) &&
       !isCompareRequestCurrent(render.__requestId)
@@ -1154,27 +983,12 @@
       return false;
     }
 
-    const layout = {
-      margin: { t: 38, r: 12, l: 58, b: 42 },
-      annotations: [{
-        xref: 'paper',
-        yref: 'paper',
-        x: 0.5,
-        y: 0.5,
-        text,
-        showarrow: false,
-        font: { size: 14 },
-      }],
-      xaxis: { visible: false },
-      yaxis: { visible: false },
-    };
+    const figure = buildCompareUnavailableFigure(text);
 
     const startRender = () => {
-      return withCompareSuppressedRelayout(window.Plotly.react(plotDiv, [], layout, {
-        responsive: true,
-        doubleClick: false,
-        doubleClickDelay: 300,
-      }));
+      return withCompareSuppressedRelayout(
+        window.Plotly.react(plotDiv, figure.data, figure.layout, figure.config),
+      );
     };
     const renderData = Number.isInteger(requestId)
       ? { __requestSlot: COMPARE_RENDER_SLOT, __requestId: requestId }
@@ -1215,37 +1029,15 @@
   }
 
   function buildCompareRender(aPayload, bPayload, sources, decision, validation, windowInfo) {
-    const aValues = payloadToF32(aPayload, sources.a);
-    const bValues = payloadToF32(bPayload, sources.b);
-    if (!aValues || !bValues) {
-      return null;
-    }
-    const rows = Number(aPayload.shape[0]);
-    const cols = Number(aPayload.shape[1]);
-    const diffValues = validation.ok ? subtractF32(aValues, bValues) : null;
-    return {
-      key1: aPayload.key1,
+    return buildCompareRenderModel({
+      aPayload,
+      bPayload,
       sources,
-      sourcePair: sourcePairKey(sources),
-      scaling: currentScaling,
-      lmoKey: aPayload.lmoKey,
-      mode: decision.mode,
-      panelCount: decision.panelCount,
-      stepX: decision.stepX,
-      stepY: decision.stepY,
-      x0: aPayload.x0,
-      x1: aPayload.x1,
-      y0: aPayload.y0,
-      y1: aPayload.y1,
-      rows,
-      cols,
+      decision,
+      validation,
       windowInfo,
-      a: { payload: aPayload, values: aValues },
-      b: { payload: bPayload, values: bValues },
-      diffAvailable: validation.ok && !!diffValues,
-      diffMessage: validation.message,
-      diffValues,
-    };
+      scaling: currentScaling,
+    });
   }
 
   function compareUnavailableMessage(sources) {
@@ -1654,7 +1446,7 @@
     clearCompareDatasetTargets,
     resetCompareTargetsForActive,
     compareHeatmapScale,
-    buildComparePanels,
+    buildComparePanels: buildComparePanelsForCurrentState,
     initCompareControls,
   };
 

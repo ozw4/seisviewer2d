@@ -4,6 +4,7 @@ beforeAll(async () => {
   await import('../../static/viewer/compare/models.js');
   await import('../../static/viewer/compare/sources.js');
   await import('../../static/viewer/compare/data.js');
+  await import('../../static/viewer/compare/render.js');
   await import('../../static/viewer/compare.js');
 });
 
