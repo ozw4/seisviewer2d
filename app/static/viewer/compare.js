@@ -3,6 +3,7 @@
   const compareSources = window.__svCompareSources || {};
   const compareData = window.__svCompareData || {};
   const compareRender = window.__svCompareRender || {};
+  const compareApi = window.__svCompareApi || {};
   const {
     compareSourceId,
     normalizeCompareFileTarget,
@@ -45,6 +46,15 @@
     buildCompareRender: buildCompareRenderModel,
     buildCompareUnavailableFigure,
   } = compareRender;
+  const {
+    CompareFetchError,
+    readCompareResponseDetail,
+    loadCompareRecentDatasets: fetchCompareRecentDatasets,
+    validateRawCompareSources: fetchRawCompareValidation,
+    ensureRawCompareReferenceBaseline: fetchRawCompareReferenceBaseline,
+    fetchComparePayload: fetchComparePayloadApi,
+    postCompareBSourceImport,
+  } = compareApi;
 
   for (const helper of [
     compareSourceId,
@@ -104,6 +114,19 @@
       throw new Error('compare/render.js must be loaded before compare.js');
     }
   }
+  for (const helper of [
+    CompareFetchError,
+    readCompareResponseDetail,
+    fetchCompareRecentDatasets,
+    fetchRawCompareValidation,
+    fetchRawCompareReferenceBaseline,
+    fetchComparePayloadApi,
+    postCompareBSourceImport,
+  ]) {
+    if (typeof helper !== 'function') {
+      throw new Error('compare/api.js must be loaded before compare.js');
+    }
+  }
 
   const COMPARE_CACHE_PURPOSE = 'compare';
   const COMPARE_RENDER_SLOT = 'compare-window';
@@ -117,18 +140,6 @@
   let compareActiveSyncQueued = false;
   let rawCompareValidationCache = new Map();
   let compareImportInFlight = false;
-
-  class CompareFetchError extends Error {
-    constructor(source, status, detail) {
-      const label = source && source.role === 'A' ? 'A' : 'B';
-      const suffix = detail ? `: ${detail}` : '';
-      super(`${label} source fetch failed (${status})${suffix}`);
-      this.name = 'CompareFetchError';
-      this.source = source;
-      this.status = status;
-      this.detail = detail || '';
-    }
-  }
 
   function getCompareNodes() {
     return {
@@ -391,10 +402,7 @@
     const { datasetPicker } = getCompareNodes();
     if (!datasetPicker || typeof fetch !== 'function') return;
     try {
-      const response = await fetch('/recent_datasets');
-      if (!response.ok) throw new Error(`Recent datasets request failed (${response.status})`);
-      const payload = await response.json();
-      compareRecentDatasets = Array.isArray(payload?.datasets) ? payload.datasets : [];
+      compareRecentDatasets = await fetchCompareRecentDatasets();
       renderCompareDatasetPicker();
     } catch (err) {
       compareRecentDatasets = [];
@@ -458,19 +466,6 @@
     return sources.a.domain === sources.b.domain;
   }
 
-  async function readCompareResponseDetail(response) {
-    try {
-      const contentType = response.headers?.get?.('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const json = await response.json();
-        return typeof json?.detail === 'string' ? json.detail : '';
-      }
-      return await response.text();
-    } catch (_) {
-      return '';
-    }
-  }
-
   async function validateRawCompareSources(sources, signal) {
     if (!shouldValidateRawCompareSources(sources)) return { ok: true, reason: '', message: '' };
 
@@ -490,26 +485,12 @@
       return rawCompareValidationCache.get(cacheKey);
     }
 
-    const params = new URLSearchParams({
-      file_id_a: String(sources.a.fileId),
-      file_id_b: String(sources.b.fileId),
-      key1_byte: String(key1ByteA),
-      key2_byte: String(key2ByteA),
+    const result = await fetchRawCompareValidation({
+      sources,
+      key1Byte: key1ByteA,
+      key2Byte: key2ByteA,
+      signal,
     });
-    const response = await fetch(`/compare/raw/validate?${params.toString()}`, { signal });
-    if (!response.ok) {
-      const detail = await readCompareResponseDetail(response);
-      throw new Error(detail || `A-B validation failed (${response.status})`);
-    }
-    const payload = await response.json();
-    const result = {
-      ok: payload?.ok === true,
-      reason: String(payload?.reason || ''),
-      message: String(payload?.message || ''),
-    };
-    if (!result.ok && !result.message) {
-      result.message = 'A-B unavailable: raw source grids are different.';
-    }
     rawCompareValidationCache.set(cacheKey, result);
     return result;
   }
@@ -524,17 +505,12 @@
       throw new Error('A-B unavailable: source key bytes are missing.');
     }
 
-    const params = new URLSearchParams({
-      file_id: String(sources.a.fileId),
-      key1_byte: String(key1Byte),
-      key2_byte: String(key2Byte),
+    return fetchRawCompareReferenceBaseline({
+      sourceA: sources.a,
+      key1Byte,
+      key2Byte,
+      signal,
     });
-    const response = await fetch(`/get_section_meta?${params.toString()}`, { signal });
-    if (!response.ok) {
-      const detail = await readCompareResponseDetail(response);
-      throw new Error(detail || `A normalization baseline is unavailable (${response.status})`);
-    }
-    return true;
   }
 
   function visibleComparePanelCount(sources) {
@@ -691,19 +667,14 @@
       return false;
     }
     const startingActiveIdentity = compareTargetIdentity(active);
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('key1_byte', String(active.key1Byte));
-    formData.append('key2_byte', String(active.key2Byte));
 
     setCompareImportInFlight(true);
     try {
-      const response = await fetch('/compare/raw/import', { method: 'POST', body: formData });
-      if (!response.ok) {
-        const detail = await readCompareResponseDetail(response);
-        throw new Error(detail || `Import B source failed (${response.status})`);
-      }
-      const payload = await response.json();
+      const payload = await postCompareBSourceImport({
+        file,
+        key1Byte: active.key1Byte,
+        key2Byte: active.key2Byte,
+      });
       if (compareTargetIdentity(activeCompareFileTarget()) !== startingActiveIdentity) {
         setCompareStatus('B source was imported, but the active A dataset changed. Add it from recent datasets.');
         loadCompareRecentDatasets();
@@ -762,60 +733,21 @@
   }
 
   async function fetchComparePayload(request, signal, requestId) {
-    if (!isCompareRequestCurrent(requestId)) {
-      markStaleCompareRequest(requestId);
-      return null;
-    }
-    if (!isCompareLmoCurrent(request.payloadMeta?.lmoKey)) return null;
-    const cached = windowCacheGet(request.cacheKey);
-    if (
-      cached &&
-      isCompareLmoCurrent(cached.lmoKey) &&
-      canUseCachedComparePayload(cached, request.source)
-    ) {
-      if (!isCompareRequestCurrent(requestId)) {
-        markStaleCompareRequest(requestId);
-        return null;
-      }
-      return cached;
-    }
-
-    const res = await fetch(`/get_section_window_bin?${request.params.toString()}`, { signal });
-    if (!res.ok) {
-      let detail = '';
-      try {
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          const json = await res.json();
-          detail = typeof json?.detail === 'string' ? json.detail : '';
-        } else {
-          detail = await res.text();
-        }
-      } catch (_) {
-        detail = '';
-      }
-      throw new CompareFetchError(request.source, res.status, detail);
-    }
-    const buf = await res.arrayBuffer();
-    if (!isCompareRequestCurrent(requestId)) {
-      markStaleCompareRequest(requestId);
-      return null;
-    }
-    if (!isCompareLmoCurrent(request.payloadMeta?.lmoKey)) return null;
-    const payload = decodeWindowPayload(
-      new Uint8Array(buf),
-      request.payloadMeta,
-      null,
-      (shape) => console.warn('Unexpected compare window shape', shape),
-    );
-    if (!payload) return null;
-    if (!isCompareRequestCurrent(requestId)) {
-      markStaleCompareRequest(requestId);
-      return null;
-    }
-    if (!isCompareLmoCurrent(payload.lmoKey)) return null;
-    windowCacheSet(request.cacheKey, payload);
-    return payload;
+    return fetchComparePayloadApi({
+      request,
+      signal,
+      requestId,
+      hooks: {
+        isRequestCurrent: isCompareRequestCurrent,
+        markStale: markStaleCompareRequest,
+        isLmoCurrent: isCompareLmoCurrent,
+        cacheGet: windowCacheGet,
+        cacheSet: windowCacheSet,
+        canUseCachedPayload: canUseCachedComparePayload,
+        decodePayload: decodeWindowPayload,
+        onUnexpectedShape: (shape) => console.warn('Unexpected compare window shape', shape),
+      },
+    });
   }
 
   function currentCompareGain() {
@@ -1422,8 +1354,10 @@
     resolveCompareNormalizationFileId,
     shouldValidateRawCompareSources,
     rawCompareValidationKey,
+    readCompareResponseDetail,
     validateRawCompareSources,
     ensureRawCompareReferenceBaseline,
+    fetchComparePayload,
     renderCompareUnavailable,
     getLatestCompareRender: () => latestCompareRender,
     setLatestCompareRenderForTest: (render) => { latestCompareRender = render; },
