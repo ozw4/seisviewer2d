@@ -1,15 +1,33 @@
 (function () {
-  const compareModels = window.__svCompareModels || {};
-  const compareSources = window.__svCompareSources || {};
-  const compareData = window.__svCompareData || {};
-  const compareRender = window.__svCompareRender || {};
+  const compareDeps = {
+    models: window.__svCompareModels,
+    sources: window.__svCompareSources,
+    data: window.__svCompareData,
+    render: window.__svCompareRender,
+    api: window.__svCompareApi,
+  };
+
+  for (const [name, mod] of Object.entries(compareDeps)) {
+    if (!mod) throw new Error(`compare/${name}.js must be loaded before compare.js`);
+  }
+
+  const compareModels = compareDeps.models;
+  const compareSources = compareDeps.sources;
+  const compareData = compareDeps.data;
+  const compareRender = compareDeps.render;
+  const compareApi = compareDeps.api;
   const {
     compareSourceId,
     normalizeCompareFileTarget,
     compareTargetDatasetKey,
     compareTargetIdentity,
+    resetCompareTargetsForActive,
+    clearCompareDatasetTargets,
     normalizeRecentDataset,
     compareRecentDatasetValue,
+    addCompareDatasetTarget,
+    resolveCompareRecentDataset,
+    datasetMatchesActiveKeys,
   } = compareModels;
   const {
     rawCompareSource,
@@ -45,14 +63,28 @@
     buildCompareRender: buildCompareRenderModel,
     buildCompareUnavailableFigure,
   } = compareRender;
+  const {
+    CompareFetchError,
+    readCompareResponseDetail,
+    loadCompareRecentDatasets: fetchCompareRecentDatasets,
+    validateRawCompareSources: fetchRawCompareValidation,
+    ensureRawCompareReferenceBaseline: fetchRawCompareReferenceBaseline,
+    fetchComparePayload: fetchComparePayloadApi,
+    postCompareBSourceImport,
+  } = compareApi;
 
   for (const helper of [
     compareSourceId,
     normalizeCompareFileTarget,
     compareTargetDatasetKey,
     compareTargetIdentity,
+    resetCompareTargetsForActive,
+    clearCompareDatasetTargets,
     normalizeRecentDataset,
     compareRecentDatasetValue,
+    addCompareDatasetTarget,
+    resolveCompareRecentDataset,
+    datasetMatchesActiveKeys,
   ]) {
     if (typeof helper !== 'function') {
       throw new Error('compare/models.js must be loaded before compare.js');
@@ -104,6 +136,19 @@
       throw new Error('compare/render.js must be loaded before compare.js');
     }
   }
+  for (const helper of [
+    CompareFetchError,
+    readCompareResponseDetail,
+    fetchCompareRecentDatasets,
+    fetchRawCompareValidation,
+    fetchRawCompareReferenceBaseline,
+    fetchComparePayloadApi,
+    postCompareBSourceImport,
+  ]) {
+    if (typeof helper !== 'function') {
+      throw new Error('compare/api.js must be loaded before compare.js');
+    }
+  }
 
   const COMPARE_CACHE_PURPOSE = 'compare';
   const COMPARE_RENDER_SLOT = 'compare-window';
@@ -117,18 +162,6 @@
   let compareActiveSyncQueued = false;
   let rawCompareValidationCache = new Map();
   let compareImportInFlight = false;
-
-  class CompareFetchError extends Error {
-    constructor(source, status, detail) {
-      const label = source && source.role === 'A' ? 'A' : 'B';
-      const suffix = detail ? `: ${detail}` : '';
-      super(`${label} source fetch failed (${status})${suffix}`);
-      this.name = 'CompareFetchError';
-      this.source = source;
-      this.status = status;
-      this.detail = detail || '';
-    }
-  }
 
   function getCompareNodes() {
     return {
@@ -217,50 +250,6 @@
     });
   }
 
-  function addCompareDatasetTarget(targets, candidate, activeTarget) {
-    const active = normalizeCompareFileTarget(activeTarget);
-    const nextTarget = normalizeCompareFileTarget(candidate);
-    if (!active) return { targets: [], added: false, reason: 'Open a dataset before adding compare targets.' };
-    if (!nextTarget) {
-      return {
-        targets: resetCompareTargetsForActive(targets, active),
-        added: false,
-        reason: 'Compare dataset could not be opened.',
-      };
-    }
-    if (nextTarget.key1Byte !== active.key1Byte || nextTarget.key2Byte !== active.key2Byte) {
-      return {
-        targets: resetCompareTargetsForActive(targets, active),
-        added: false,
-        reason: 'Dataset key bytes do not match the active file.',
-      };
-    }
-    const next = resetCompareTargetsForActive(targets, active);
-    const nextDatasetKey = compareTargetDatasetKey(nextTarget);
-    if (nextDatasetKey && next.some((target) => compareTargetDatasetKey(target) === nextDatasetKey)) {
-      return { targets: next, added: false, reason: 'Dataset is already added.' };
-    }
-    return { targets: [...next, { ...nextTarget, isActive: false }], added: true, reason: '' };
-  }
-
-  function resetCompareTargetsForActive(targets, activeTarget) {
-    const active = normalizeCompareFileTarget(activeTarget);
-    if (!active) return [];
-    const activeKey = compareTargetIdentity(active);
-    const current = Array.isArray(targets) ? targets : [];
-    if (current.length === 0 || compareTargetIdentity(current[0]) !== activeKey) {
-      return [{ ...active, isActive: true }];
-    }
-    return [{ ...active, isActive: true }, ...current.slice(1).map((target) => ({
-      ...target,
-      isActive: false,
-    }))];
-  }
-
-  function clearCompareDatasetTargets(targets, activeTarget) {
-    return resetCompareTargetsForActive([], activeTarget);
-  }
-
   function resetCompareTargetsForActiveFile() {
     clearRawCompareValidationCache();
     compareActiveTargetKey = '';
@@ -338,20 +327,6 @@
     });
   }
 
-  function resolveCompareRecentDataset(datasets, selectedValue) {
-    if (!selectedValue) return null;
-    return (Array.isArray(datasets) ? datasets : [])
-      .map(normalizeRecentDataset)
-      .find((dataset) => dataset && compareRecentDatasetValue(dataset) === selectedValue) || null;
-  }
-
-  function datasetMatchesActiveKeys(dataset, activeTarget) {
-    const active = normalizeCompareFileTarget(activeTarget);
-    return !!active
-      && Number(dataset?.key1Byte) === active.key1Byte
-      && Number(dataset?.key2Byte) === active.key2Byte;
-  }
-
   function renderCompareDatasetPicker() {
     const { datasetPicker, addDataset } = getCompareNodes();
     if (!datasetPicker) return;
@@ -391,10 +366,7 @@
     const { datasetPicker } = getCompareNodes();
     if (!datasetPicker || typeof fetch !== 'function') return;
     try {
-      const response = await fetch('/recent_datasets');
-      if (!response.ok) throw new Error(`Recent datasets request failed (${response.status})`);
-      const payload = await response.json();
-      compareRecentDatasets = Array.isArray(payload?.datasets) ? payload.datasets : [];
+      compareRecentDatasets = await fetchCompareRecentDatasets();
       renderCompareDatasetPicker();
     } catch (err) {
       compareRecentDatasets = [];
@@ -458,19 +430,6 @@
     return sources.a.domain === sources.b.domain;
   }
 
-  async function readCompareResponseDetail(response) {
-    try {
-      const contentType = response.headers?.get?.('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const json = await response.json();
-        return typeof json?.detail === 'string' ? json.detail : '';
-      }
-      return await response.text();
-    } catch (_) {
-      return '';
-    }
-  }
-
   async function validateRawCompareSources(sources, signal) {
     if (!shouldValidateRawCompareSources(sources)) return { ok: true, reason: '', message: '' };
 
@@ -490,26 +449,12 @@
       return rawCompareValidationCache.get(cacheKey);
     }
 
-    const params = new URLSearchParams({
-      file_id_a: String(sources.a.fileId),
-      file_id_b: String(sources.b.fileId),
-      key1_byte: String(key1ByteA),
-      key2_byte: String(key2ByteA),
+    const result = await fetchRawCompareValidation({
+      sources,
+      key1Byte: key1ByteA,
+      key2Byte: key2ByteA,
+      signal,
     });
-    const response = await fetch(`/compare/raw/validate?${params.toString()}`, { signal });
-    if (!response.ok) {
-      const detail = await readCompareResponseDetail(response);
-      throw new Error(detail || `A-B validation failed (${response.status})`);
-    }
-    const payload = await response.json();
-    const result = {
-      ok: payload?.ok === true,
-      reason: String(payload?.reason || ''),
-      message: String(payload?.message || ''),
-    };
-    if (!result.ok && !result.message) {
-      result.message = 'A-B unavailable: raw source grids are different.';
-    }
     rawCompareValidationCache.set(cacheKey, result);
     return result;
   }
@@ -524,17 +469,12 @@
       throw new Error('A-B unavailable: source key bytes are missing.');
     }
 
-    const params = new URLSearchParams({
-      file_id: String(sources.a.fileId),
-      key1_byte: String(key1Byte),
-      key2_byte: String(key2Byte),
+    return fetchRawCompareReferenceBaseline({
+      sourceA: sources.a,
+      key1Byte,
+      key2Byte,
+      signal,
     });
-    const response = await fetch(`/get_section_meta?${params.toString()}`, { signal });
-    if (!response.ok) {
-      const detail = await readCompareResponseDetail(response);
-      throw new Error(detail || `A normalization baseline is unavailable (${response.status})`);
-    }
-    return true;
   }
 
   function visibleComparePanelCount(sources) {
@@ -691,19 +631,14 @@
       return false;
     }
     const startingActiveIdentity = compareTargetIdentity(active);
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('key1_byte', String(active.key1Byte));
-    formData.append('key2_byte', String(active.key2Byte));
 
     setCompareImportInFlight(true);
     try {
-      const response = await fetch('/compare/raw/import', { method: 'POST', body: formData });
-      if (!response.ok) {
-        const detail = await readCompareResponseDetail(response);
-        throw new Error(detail || `Import B source failed (${response.status})`);
-      }
-      const payload = await response.json();
+      const payload = await postCompareBSourceImport({
+        file,
+        key1Byte: active.key1Byte,
+        key2Byte: active.key2Byte,
+      });
       if (compareTargetIdentity(activeCompareFileTarget()) !== startingActiveIdentity) {
         setCompareStatus('B source was imported, but the active A dataset changed. Add it from recent datasets.');
         loadCompareRecentDatasets();
@@ -762,60 +697,21 @@
   }
 
   async function fetchComparePayload(request, signal, requestId) {
-    if (!isCompareRequestCurrent(requestId)) {
-      markStaleCompareRequest(requestId);
-      return null;
-    }
-    if (!isCompareLmoCurrent(request.payloadMeta?.lmoKey)) return null;
-    const cached = windowCacheGet(request.cacheKey);
-    if (
-      cached &&
-      isCompareLmoCurrent(cached.lmoKey) &&
-      canUseCachedComparePayload(cached, request.source)
-    ) {
-      if (!isCompareRequestCurrent(requestId)) {
-        markStaleCompareRequest(requestId);
-        return null;
-      }
-      return cached;
-    }
-
-    const res = await fetch(`/get_section_window_bin?${request.params.toString()}`, { signal });
-    if (!res.ok) {
-      let detail = '';
-      try {
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          const json = await res.json();
-          detail = typeof json?.detail === 'string' ? json.detail : '';
-        } else {
-          detail = await res.text();
-        }
-      } catch (_) {
-        detail = '';
-      }
-      throw new CompareFetchError(request.source, res.status, detail);
-    }
-    const buf = await res.arrayBuffer();
-    if (!isCompareRequestCurrent(requestId)) {
-      markStaleCompareRequest(requestId);
-      return null;
-    }
-    if (!isCompareLmoCurrent(request.payloadMeta?.lmoKey)) return null;
-    const payload = decodeWindowPayload(
-      new Uint8Array(buf),
-      request.payloadMeta,
-      null,
-      (shape) => console.warn('Unexpected compare window shape', shape),
-    );
-    if (!payload) return null;
-    if (!isCompareRequestCurrent(requestId)) {
-      markStaleCompareRequest(requestId);
-      return null;
-    }
-    if (!isCompareLmoCurrent(payload.lmoKey)) return null;
-    windowCacheSet(request.cacheKey, payload);
-    return payload;
+    return fetchComparePayloadApi({
+      request,
+      signal,
+      requestId,
+      hooks: {
+        isRequestCurrent: isCompareRequestCurrent,
+        markStale: markStaleCompareRequest,
+        isLmoCurrent: isCompareLmoCurrent,
+        cacheGet: windowCacheGet,
+        cacheSet: windowCacheSet,
+        canUseCachedPayload: canUseCachedComparePayload,
+        decodePayload: decodeWindowPayload,
+        onUnexpectedShape: (shape) => console.warn('Unexpected compare window shape', shape),
+      },
+    });
   }
 
   function currentCompareGain() {
@@ -1402,28 +1298,14 @@
   window.clearCompareRender = clearCompareRender;
   window.resetCompareTargetsForActiveFile = resetCompareTargetsForActiveFile;
   window.__svCompare = {
-    validateComparePair,
-    subtractF32,
-    payloadToF32,
-    activeCompareFileTarget: compareSources.activeCompareFileTarget,
-    compareTargetLabelName: compareSources.compareTargetLabelName,
-    rawCompareSource,
-    tapCompareSource: compareSources.tapCompareSource,
-    buildCompareSourceCatalog,
-    resolveSourceDomain,
-    resolveCompareSource,
-    sourcePairKey,
-    isRawCompareSource,
-    normalizeCompareFileTarget,
-    compareTargetDatasetKey,
-    normalizeRecentDataset,
-    compareRecentDatasetValue,
-    resolveCompareRecentDataset,
-    resolveCompareNormalizationFileId,
-    shouldValidateRawCompareSources,
-    rawCompareValidationKey,
+    ...compareDeps.models,
+    ...compareDeps.sources,
+    ...compareDeps.data,
+    ...compareDeps.render,
+    ...compareDeps.api,
     validateRawCompareSources,
     ensureRawCompareReferenceBaseline,
+    fetchComparePayload,
     renderCompareUnavailable,
     getLatestCompareRender: () => latestCompareRender,
     setLatestCompareRenderForTest: (render) => { latestCompareRender = render; },
@@ -1439,12 +1321,10 @@
     clearRawCompareValidationCache,
     compareUnavailableMessage,
     buildCompareRequest,
+    fetchCompareAndPlot,
     addSelectedCompareDataset,
     importCompareBSourceFile,
     compareSourceId,
-    addCompareDatasetTarget,
-    clearCompareDatasetTargets,
-    resetCompareTargetsForActive,
     compareHeatmapScale,
     buildComparePanels: buildComparePanelsForCurrentState,
     buildCompareLayout: buildCompareLayoutForCurrentState,
