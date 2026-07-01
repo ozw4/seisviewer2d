@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest';
 
 beforeAll(async () => {
+  await import('../../static/viewer/compare/models.js');
   await import('../../static/viewer/compare.js');
 });
 
@@ -653,59 +654,6 @@ test('raw source unavailable message does not use tap pipeline wording', () => {
 
   expect(message).toBe('A-B unavailable: A raw source is not available.');
   expect(message).not.toMatch(/Run pipeline first|tap/i);
-});
-
-test('normalizeCompareFileTarget reads store and source hash fields', () => {
-  expect(window.__svCompare.normalizeCompareFileTarget({
-    file_id: 'file-1',
-    file_name: 'line.sgy',
-    key1_byte: 189,
-    key2_byte: 193,
-    original_name: 'line.sgy',
-    store_name: 'stores/a.sgy',
-    source_sha256: 'abcdef1234567890',
-  })).toMatchObject({
-    fileId: 'file-1',
-    displayName: 'line.sgy',
-    key1Byte: 189,
-    key2Byte: 193,
-    originalName: 'line.sgy',
-    storeName: 'stores/a.sgy',
-    sourceSha256: 'abcdef1234567890',
-  });
-
-  expect(window.__svCompare.normalizeCompareFileTarget({
-    fileId: 'file-2',
-    displayName: 'line.sgy',
-    key1Byte: 189,
-    key2Byte: 193,
-    storeName: 'stores/b.sgy',
-    sourceSha256: 'fedcba0987654321',
-  })).toMatchObject({
-    storeName: 'stores/b.sgy',
-    sourceSha256: 'fedcba0987654321',
-  });
-});
-
-test('compareTargetDatasetKey prefers source hash for duplicate identity', () => {
-  const base = {
-    fileId: 'file-1',
-    displayName: 'line.sgy',
-    originalName: 'line.sgy',
-    storeName: 'stores/a.sgy',
-    key1Byte: 189,
-    key2Byte: 193,
-  };
-
-  expect(window.__svCompare.compareTargetDatasetKey({
-    ...base,
-    sourceSha256: 'abcdef1234567890',
-  })).toBe('sha256:abcdef1234567890|189|193');
-  expect(window.__svCompare.compareTargetDatasetKey(base)).toBe('store:stores/a.sgy|189|193');
-  expect(window.__svCompare.compareTargetDatasetKey({
-    ...base,
-    storeName: '',
-  })).toBe('name:line.sgy|189|193');
 });
 
 test('compare recent dataset selection includes key-byte identity', () => {
