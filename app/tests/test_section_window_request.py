@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 import subprocess
 import sys
@@ -76,6 +77,15 @@ def test_raw_source_applies_requested_normalization_file() -> None:
     assert req.raw_normalization_file_id == 'file-b'
 
 
+def test_raw_source_baseline_request_uses_reference_file_id() -> None:
+    baseline_request = _request(normalization_file_id='file-b').raw_baseline_request()
+
+    assert baseline_request is not None
+    assert baseline_request.file_id == 'file-b'
+    assert baseline_request.key1_byte == 189
+    assert baseline_request.key2_byte == 193
+
+
 @pytest.mark.parametrize('field', ['pipeline_key', 'tap_label'])
 def test_pipeline_source_disables_raw_baseline_normalization(field: str) -> None:
     req = _request(normalization_file_id='file-b', **{field: 'source'})
@@ -83,6 +93,7 @@ def test_pipeline_source_disables_raw_baseline_normalization(field: str) -> None
     assert req.uses_pipeline_source is True
     assert req.normalization_applies_to_raw is False
     assert req.raw_normalization_file_id == 'file-a'
+    assert req.raw_baseline_request() is None
 
 
 @pytest.mark.parametrize('field', ['reference_pipeline_key', 'reference_tap_label'])
@@ -92,6 +103,7 @@ def test_reference_source_disables_raw_baseline_normalization(field: str) -> Non
     assert req.uses_reference_source is True
     assert req.normalization_applies_to_raw is False
     assert req.raw_normalization_file_id == 'file-a'
+    assert req.raw_baseline_request() is None
 
 
 def test_lmo_disabled_cache_key_ignores_lmo_parameter_differences() -> None:
@@ -115,6 +127,39 @@ def test_offset_model_forces_fixed_offset_byte_for_payload() -> None:
     )
 
     assert req.offset_byte_for_payload == DEFAULT_FIXED_OFFSET_BYTE
+
+
+def test_payload_kwargs_match_build_section_window_payload_request_args() -> None:
+    from app.services.section_service import build_section_window_payload
+
+    service_injected_args = {
+        'trace_stats_cache',
+        'reader_getter',
+        'pipeline_section_getter',
+        'store_dir_resolver',
+        'trace_stats_lock',
+        'dt_resolver',
+        'perf_timings_ms',
+    }
+    expected = set(inspect.signature(build_section_window_payload).parameters)
+    expected -= service_injected_args
+
+    assert set(_request().payload_kwargs()) == expected
+
+
+def test_payload_kwargs_offset_byte_reflects_forced_offset_byte() -> None:
+    kwargs = _request(
+        offset_byte=41,
+        default_fbpick_model_id='fbpick_offset_edgenext_small.pt',
+    ).payload_kwargs()
+
+    assert kwargs['offset_byte'] == DEFAULT_FIXED_OFFSET_BYTE
+
+
+def test_payload_kwargs_scaling_mode_is_normalized_to_lowercase() -> None:
+    kwargs = _request(scaling='TRACEWISE').payload_kwargs()
+
+    assert kwargs['scaling_mode'] == 'tracewise'
 
 
 @pytest.mark.parametrize(

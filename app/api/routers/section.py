@@ -457,10 +457,6 @@ def get_section_window_bin(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     state = get_state(request.app)
-    mode = window_request.scaling_mode
-    raw_normalization_file_id = window_request.raw_normalization_file_id
-    normalization_applies_to_raw = window_request.normalization_applies_to_raw
-    forced_offset_byte = window_request.offset_byte_for_payload
     cache_key = window_request.cache_key()
 
     with state.lock:
@@ -480,41 +476,17 @@ def get_section_window_bin(
 
     perf_timings_ms: dict[str, float] = {}
     try:
-        if normalization_applies_to_raw:
+        baseline_request = window_request.raw_baseline_request()
+        if baseline_request is not None:
             get_or_create_raw_baseline(
-                file_id=raw_normalization_file_id,
-                key1_byte=int(key1_byte),
-                key2_byte=int(key2_byte),
+                file_id=baseline_request.file_id,
+                key1_byte=baseline_request.key1_byte,
+                key2_byte=baseline_request.key2_byte,
                 app=request.app,
                 include_arrays=False,
             )
         compressed = build_section_window_payload(
-            file_id=file_id,
-            normalization_file_id=raw_normalization_file_id,
-            key1=key1,
-            key1_byte=key1_byte,
-            key2_byte=key2_byte,
-            offset_byte=forced_offset_byte,
-            x0=x0,
-            x1=x1,
-            y0=y0,
-            y1=y1,
-            step_x=step_x,
-            step_y=step_y,
-            transpose=transpose,
-            pipeline_key=pipeline_key,
-            tap_label=tap_label,
-            reference_pipeline_key=reference_pipeline_key,
-            reference_tap_label=reference_tap_label,
-            scaling_mode=mode,
-            lmo_enabled=lmo_enabled,
-            lmo_velocity_mps=lmo_velocity_mps,
-            lmo_offset_byte=lmo_offset_byte,
-            lmo_offset_scale=lmo_offset_scale,
-            lmo_offset_mode=lmo_offset_mode,
-            lmo_ref_mode=lmo_ref_mode,
-            lmo_ref_trace=lmo_ref_trace,
-            lmo_polarity=lmo_polarity,
+            **window_request.payload_kwargs(),
             trace_stats_cache=state.trace_stats_cache,
             trace_stats_lock=state.lock,
             reader_getter=lambda fid, kb1, kb2: get_reader(fid, kb1, kb2, state=state),

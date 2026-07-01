@@ -11,6 +11,15 @@ _SCALING_MODES = frozenset({'amax', 'tracewise'})
 
 
 @dataclass(frozen=True)
+class RawBaselineRequest:
+    """Raw baseline preflight target for a section-window request."""
+
+    file_id: str
+    key1_byte: int
+    key2_byte: int
+
+
+@dataclass(frozen=True)
 class SectionWindowRequest:
     """HTTP-independent model for section-window request semantics."""
 
@@ -78,6 +87,47 @@ class SectionWindowRequest:
             return self.fixed_offset_byte
         return self.offset_byte
 
+    def raw_baseline_request(self) -> RawBaselineRequest | None:
+        """Return raw baseline preflight target, or None for pipeline/reference sources."""
+        if not self.normalization_applies_to_raw:
+            return None
+        return RawBaselineRequest(
+            file_id=self.raw_normalization_file_id,
+            key1_byte=self.key1_byte,
+            key2_byte=self.key2_byte,
+        )
+
+    def payload_kwargs(self) -> dict[str, object]:
+        """Return section-window payload kwargs excluding runtime dependencies."""
+        return {
+            'file_id': self.file_id,
+            'normalization_file_id': self.raw_normalization_file_id,
+            'key1': self.key1,
+            'key1_byte': self.key1_byte,
+            'key2_byte': self.key2_byte,
+            'offset_byte': self.offset_byte_for_payload,
+            'x0': self.x0,
+            'x1': self.x1,
+            'y0': self.y0,
+            'y1': self.y1,
+            'step_x': self.step_x,
+            'step_y': self.step_y,
+            'transpose': self.transpose,
+            'pipeline_key': self.pipeline_key,
+            'tap_label': self.tap_label,
+            'reference_pipeline_key': self.reference_pipeline_key,
+            'reference_tap_label': self.reference_tap_label,
+            'scaling_mode': self.scaling_mode,
+            'lmo_enabled': self.lmo_enabled,
+            'lmo_velocity_mps': self.lmo_velocity_mps,
+            'lmo_offset_byte': self.lmo_offset_byte,
+            'lmo_offset_scale': self.lmo_offset_scale,
+            'lmo_offset_mode': self.lmo_offset_mode,
+            'lmo_ref_mode': self.lmo_ref_mode,
+            'lmo_ref_trace': self.lmo_ref_trace,
+            'lmo_polarity': self.lmo_polarity,
+        }
+
     def cache_key(self) -> tuple[object, ...]:
         """Return the current canonical section-window cache key."""
         base_key: tuple[object, ...] = (
@@ -126,5 +176,6 @@ def _normalize_scaling_mode(scaling: str | None) -> str:
 __all__ = [
     'DEFAULT_FBPICK_MODEL_ID',
     'DEFAULT_FIXED_OFFSET_BYTE',
+    'RawBaselineRequest',
     'SectionWindowRequest',
 ]
