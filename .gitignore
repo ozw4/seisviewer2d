@@ -51,7 +51,7 @@ static/assets/
 # Vite build artifacts
 app/static/assets/
 
-# legacy vendored libs (now bundled via Vite)
+# legacy vendored libs; msgpack.min.js remains for the decode worker until worker bundling changes
 app/static/plotly-*.min.js
 app/static/pako*.min.js
 app/static/msgpack*.min.js

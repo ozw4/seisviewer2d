@@ -379,311 +379,34 @@
     </section>
   </div>
   <div id="opToastHost" aria-live="polite" aria-atomic="false"></div>
-  <script>
-    const ACTIVE_VIEWER_TARGET_STORAGE_KEY = 'sv.active_viewer_target';
-
-    function safeLocalStorageGet(key) {
-      try {
-        return localStorage.getItem(key) || '';
-      } catch (_) {
-        return '';
-      }
-    }
-
-    function safeLocalStorageSet(key, value) {
-      try {
-        localStorage.setItem(key, value);
-      } catch (_) {
-      }
-    }
-
-    function safeLocalStorageRemove(key) {
-      try {
-        localStorage.removeItem(key);
-      } catch (_) {
-      }
-    }
-
-    function toViewerToolInteger(value) {
-      if (value === null || value === undefined) return null;
-      if (typeof value === 'string' && value.trim() === '') return null;
-      const parsed = Number(value);
-      return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-    }
-
-    function normalizeViewerToolTarget(candidate, options = {}) {
-      if (!candidate || typeof candidate !== 'object') return null;
-      if (options.requireLoaded && candidate.isFileLoaded === false) return null;
-      const fileId = String(candidate.fileId ?? candidate.file_id ?? '').trim();
-      const key1Byte = toViewerToolInteger(candidate.key1Byte ?? candidate.key1_byte);
-      const key2Byte = toViewerToolInteger(candidate.key2Byte ?? candidate.key2_byte);
-      if (!fileId || key1Byte === null || key2Byte === null) return null;
-      const displayName = String(
-        candidate.displayName ?? candidate.display_name ?? candidate.fileName ?? candidate.file_name ?? fileId
-      ).trim() || fileId;
-      return {
-        fileId,
-        displayName,
-        key1Byte,
-        key2Byte,
-        isFileLoaded: candidate.isFileLoaded !== false,
-      };
-    }
-
-    function readViewerToolTargetFromUrl() {
-      const params = new URLSearchParams(window.location.search || '');
-      return normalizeViewerToolTarget({
-        fileId: params.get('file_id'),
-        displayName: params.get('display_name'),
-        key1Byte: params.get('key1_byte'),
-        key2Byte: params.get('key2_byte'),
-        isFileLoaded: true,
-      });
-    }
-
-    function readViewerToolTargetFromStorage() {
-      try {
-        const parsed = JSON.parse(safeLocalStorageGet(ACTIVE_VIEWER_TARGET_STORAGE_KEY) || '{}');
-        return normalizeViewerToolTarget(parsed, { requireLoaded: true });
-      } catch (_) {
-        return null;
-      }
-    }
-
-    function readViewerToolTargetFromLegacyStorage() {
-      return normalizeViewerToolTarget({
-        fileId: safeLocalStorageGet('file_id'),
-        displayName: safeLocalStorageGet('last_original_name'),
-        key1Byte: safeLocalStorageGet('key1_byte') || safeLocalStorageGet('last_key1_byte'),
-        key2Byte: safeLocalStorageGet('key2_byte') || safeLocalStorageGet('last_key2_byte'),
-        isFileLoaded: true,
-      });
-    }
-
-    function getActiveViewerToolTarget() {
-      if (window.SeisViewerState && typeof window.SeisViewerState.getActiveFileTarget === 'function') {
-        const active = normalizeViewerToolTarget(window.SeisViewerState.getActiveFileTarget(), { requireLoaded: true });
-        if (active) return active;
-      }
-      if (window.SeisViewerState && typeof window.SeisViewerState.getActiveFileTargetState === 'function') {
-        const stateTarget = normalizeViewerToolTarget(window.SeisViewerState.getActiveFileTargetState());
-        if (stateTarget) return stateTarget;
-      }
-      const globalTarget = normalizeViewerToolTarget({
-        fileId: window.currentFileId,
-        displayName: window.currentFileName,
-        key1Byte: window.currentKey1Byte,
-        key2Byte: window.currentKey2Byte,
-        isFileLoaded: Boolean(window.currentFileId),
-      });
-      return globalTarget
-        || readViewerToolTargetFromUrl()
-        || readViewerToolTargetFromStorage()
-        || readViewerToolTargetFromLegacyStorage();
-    }
-
-    window.persistActiveViewerToolTarget = function persistActiveViewerToolTarget(candidate) {
-      const target = normalizeViewerToolTarget(candidate, { requireLoaded: true });
-      if (!target) {
-        safeLocalStorageRemove(ACTIVE_VIEWER_TARGET_STORAGE_KEY);
-        return null;
-      }
-      safeLocalStorageSet('file_id', target.fileId);
-      safeLocalStorageSet('key1_byte', String(target.key1Byte));
-      safeLocalStorageSet('key2_byte', String(target.key2Byte));
-      safeLocalStorageSet('last_original_name', target.displayName);
-      safeLocalStorageSet('last_key1_byte', String(target.key1Byte));
-      safeLocalStorageSet('last_key2_byte', String(target.key2Byte));
-      safeLocalStorageSet(ACTIVE_VIEWER_TARGET_STORAGE_KEY, JSON.stringify({
-        ...target,
-        updatedAt: new Date().toISOString(),
-      }));
-      return target;
-    };
-
-    function buildViewerToolUrl(path) {
-      const target = new URL(path, window.location.origin);
-      const activeTarget = getActiveViewerToolTarget();
-      if (activeTarget) {
-        target.searchParams.set('file_id', activeTarget.fileId);
-        target.searchParams.set('key1_byte', String(activeTarget.key1Byte));
-        target.searchParams.set('key2_byte', String(activeTarget.key2Byte));
-        if (activeTarget.displayName && activeTarget.displayName !== activeTarget.fileId) {
-          target.searchParams.set('display_name', activeTarget.displayName);
-        }
-      }
-      return target;
-    }
-
-    window.refreshViewerToolLinks = function refreshViewerToolLinks() {
-      const links = [
-        ['staticCorrectionLink', '/static-correction'],
-        ['refractionQcLink', '/refraction-qc'],
-        ['batchApplyLink', '/batch'],
-      ];
-      for (const [id, path] of links) {
-        const link = document.getElementById(id);
-        if (link) link.href = buildViewerToolUrl(path).toString();
-      }
-    };
-
-    window.addEventListener('DOMContentLoaded', () => {
-      window.refreshViewerToolLinks();
-    });
-  </script>
-  <script src="/static/plotly-2.29.1.min.js"></script>
-  <script src="/static/pako.min.js"></script>
-  <script src="/static/msgpack.min.js"></script>
-  <script src="/static/api.js"></script>
-  <script src="/static/pipeline/events.js"></script>
-  <script src="/static/pipeline/progressOverlay.js"></script>
-  <script src="/static/pipeline/storage.js"></script>
-  <script src="/static/pipeline/state.js"></script>
-  <script src="/static/pipeline/render/cards.js"></script>
-  <script src="/static/pipeline/render/inspector.js"></script>
-  <script src="/static/pipeline/run.js"></script>
-  <script src="/static/pipeline/index.js"></script>
-  <script src="/static/pipeline_ui.js"></script>
+  <script src="/static/viewer/tool_links.js"></script>
+  <script type="module" src="/static/assets/main.js"></script>
+  <script defer src="/static/api.js"></script>
+  <script defer src="/static/pipeline/events.js"></script>
+  <script defer src="/static/pipeline/progressOverlay.js"></script>
+  <script defer src="/static/pipeline/storage.js"></script>
+  <script defer src="/static/pipeline/state.js"></script>
+  <script defer src="/static/pipeline/render/cards.js"></script>
+  <script defer src="/static/pipeline/render/inspector.js"></script>
+  <script defer src="/static/pipeline/run.js"></script>
+  <script defer src="/static/pipeline/index.js"></script>
+  <script defer src="/static/pipeline_ui.js"></script>
+  <script defer src="/static/viewer/restyle_only.js"></script>
+  <script defer src="/static/viewer/legacy_globals.js"></script>
+  <script defer src="/static/viewer/picks_ops.js"></script>
+  <script defer src="/static/viewer/window_render.js"></script>
+  <script defer src="/static/viewer/window_fetch.js"></script>
+  <script defer src="/static/viewer/compare/models.js"></script>
+  <script defer src="/static/viewer/compare/sources.js"></script>
+  <script defer src="/static/viewer/compare/data.js"></script>
+  <script defer src="/static/viewer/compare/render.js"></script>
+  <script defer src="/static/viewer/compare/api.js"></script>
+  <script defer src="/static/viewer/compare.js"></script>
+  <script defer src="/static/viewer/viewer_legacy.js"></script>
+  <script defer src="/static/viewer/controls_panel.js"></script>
   <script type="module" src="/static/viewer/overlay_transform.js"></script>
   <script type="module" src="/static/viewer/bootstrap.js"></script>
   <script type="module" src="/static/viewer/seis_heatmap_globals.js"></script>
-  <script src="/static/viewer/restyle_only.js"></script>
-  <script src="/static/viewer/legacy_globals.js"></script>
-  <script src="/static/viewer/picks_ops.js"></script>
-  <script src="/static/viewer/window_render.js"></script>
-  <script src="/static/viewer/window_fetch.js"></script>
-  <script src="/static/viewer/compare/models.js"></script>
-  <script src="/static/viewer/compare/sources.js"></script>
-  <script src="/static/viewer/compare/data.js"></script>
-  <script src="/static/viewer/compare/render.js"></script>
-  <script src="/static/viewer/compare/api.js"></script>
-  <script src="/static/viewer/compare.js"></script>
-  <script src="/static/viewer/viewer_legacy.js"></script>
-  <script>
-    (function initControlsPanel() {
-      const STORAGE_OPEN = 'sv.controls_panel.open';
-      const STORAGE_HEIGHT = 'sv.controls_panel.height';
-      const DEFAULT_HEIGHT = 270;
-      const MIN_HEIGHT = 120;
-      const MOBILE_BREAKPOINT = 640;
-
-      function clampHeight(nextHeight) {
-        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || DEFAULT_HEIGHT;
-        const maxHeight = Math.max(MIN_HEIGHT, Math.floor(viewportHeight * 0.6));
-        return Math.min(maxHeight, Math.max(MIN_HEIGHT, Math.round(nextHeight)));
-      }
-
-      function isMobileLayout() {
-        return window.innerWidth <= MOBILE_BREAKPOINT;
-      }
-
-      function schedulePlotResize() {
-        const plotDiv = document.getElementById('plot');
-        if (!plotDiv || typeof window.maybeResizePlot !== 'function') return;
-        window.requestAnimationFrame(() => {
-          window.maybeResizePlot(plotDiv, true).catch((err) => console.warn('controls panel resize failed', err));
-        });
-      }
-
-      window.addEventListener('DOMContentLoaded', () => {
-        const panel = document.getElementById('controlsPanel');
-        const body = document.getElementById('controlsPanelBody');
-        const toggle = document.getElementById('controlsPanelToggle');
-        const handle = document.getElementById('controlsResizeHandle');
-        if (!panel || !body || !toggle || !handle) return;
-
-        let dragging = false;
-        let dragStartY = 0;
-        let dragStartHeight = DEFAULT_HEIGHT;
-        let currentHeight = DEFAULT_HEIGHT;
-        let isOpen = true;
-
-        function persistState() {
-          try {
-            localStorage.setItem(STORAGE_OPEN, isOpen ? 'true' : 'false');
-            localStorage.setItem(STORAGE_HEIGHT, String(currentHeight));
-          } catch (_) {
-          }
-        }
-
-        function applyHeight(nextHeight, options) {
-          currentHeight = clampHeight(nextHeight);
-          if (isMobileLayout()) {
-            body.style.removeProperty('height');
-          } else {
-            body.style.height = currentHeight + 'px';
-          }
-          if (!options || options.persist !== false) persistState();
-        }
-
-        function applyOpenState(nextOpen, options) {
-          isOpen = !!nextOpen;
-          panel.classList.toggle('is-collapsed', !isOpen);
-          toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-          toggle.textContent = isOpen ? 'Hide Controls' : 'Show Controls';
-          body.hidden = !isOpen;
-          if (isOpen) {
-            applyHeight(currentHeight, { persist: false });
-          }
-          if (!options || options.persist !== false) persistState();
-          schedulePlotResize();
-        }
-
-        try {
-          const storedOpen = localStorage.getItem(STORAGE_OPEN);
-          if (storedOpen === 'false') isOpen = false;
-          const storedHeight = Number(localStorage.getItem(STORAGE_HEIGHT));
-          if (Number.isFinite(storedHeight) && storedHeight > 0) {
-            currentHeight = clampHeight(storedHeight);
-          }
-        } catch (_) {
-        }
-
-        applyHeight(currentHeight, { persist: false });
-        applyOpenState(isOpen, { persist: false });
-
-        toggle.addEventListener('click', () => {
-          applyOpenState(!isOpen);
-        });
-
-        handle.addEventListener('pointerdown', (event) => {
-          if (!isOpen || isMobileLayout()) return;
-          dragging = true;
-          dragStartY = event.clientY;
-          dragStartHeight = body.getBoundingClientRect().height;
-          panel.classList.add('is-resizing');
-          handle.setPointerCapture(event.pointerId);
-          event.preventDefault();
-        });
-
-        handle.addEventListener('pointermove', (event) => {
-          if (!dragging) return;
-          const deltaY = event.clientY - dragStartY;
-          applyHeight(dragStartHeight + deltaY, { persist: false });
-          schedulePlotResize();
-        });
-
-        function finishDrag(event) {
-          if (!dragging) return;
-          dragging = false;
-          panel.classList.remove('is-resizing');
-          if (event && typeof handle.releasePointerCapture === 'function' && handle.hasPointerCapture(event.pointerId)) {
-            handle.releasePointerCapture(event.pointerId);
-          }
-          persistState();
-          schedulePlotResize();
-        }
-
-        handle.addEventListener('pointerup', finishDrag);
-        handle.addEventListener('pointercancel', finishDrag);
-
-        window.addEventListener('resize', () => {
-          applyHeight(currentHeight, { persist: false });
-          schedulePlotResize();
-        });
-      });
-    })();
-  </script>
   <div id="ppOverlay">
     <div class="ppCard">
       <div class="ppTitle">Pipeline running…</div>

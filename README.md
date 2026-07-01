@@ -123,7 +123,8 @@ QC page entrypoints stay at `/static/refraction_static_run.js` and
 `/static/refraction_qc.js`; the Vite build also emits bundled copies under
 `app/static/assets/` and generated assets are not required for source edits.
 
-The main viewer page (`app/static/index.html`) expects a small Vite-built bundle at `/static/assets/main.js`.
+The main viewer page (`app/static/index.html`) loads `/static/assets/main.js`, a Vite-built bundle that exposes
+the viewer vendor globals (`window.Plotly`, `window.pako`, and `window.msgpack`) before the legacy viewer scripts run.
 If you change frontend sources, rebuild with:
 
 ```bash
