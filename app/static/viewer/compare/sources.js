@@ -159,7 +159,7 @@
 
   function resolveCompareNormalizationFileId(source, referenceSource, fallbackFileId = null) {
     if (!isRawCompareSource(source) || !isRawCompareSource(referenceSource)) return null;
-    const fileId = String(referenceSource?.fileId || source?.fileId || fallbackFileId || '').trim();
+    const fileId = String(source?.fileId || referenceSource?.fileId || fallbackFileId || '').trim();
     return fileId || null;
   }
 

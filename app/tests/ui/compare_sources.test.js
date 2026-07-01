@@ -130,7 +130,7 @@ test('A-reference normalization resolves to A file id for raw/raw sources', () =
   const sourceB = { fileId: 'file-b', layerId: 'raw' };
 
   expect(sources().resolveCompareNormalizationFileId(sourceA, sourceA)).toBe('file-a');
-  expect(sources().resolveCompareNormalizationFileId(sourceB, sourceA)).toBe('file-a');
+  expect(sources().resolveCompareNormalizationFileId(sourceA, sourceB)).toBe('file-a');
 });
 
 test('pipeline and reference sources do not reuse raw normalization file id', () => {

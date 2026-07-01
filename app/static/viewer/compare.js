@@ -602,7 +602,7 @@
       tapLabel,
       referencePipelineKey,
       referenceTapLabel,
-      normalizationFileId: resolveCompareNormalizationFileId(source, referenceSource, fileId),
+      normalizationFileId: resolveCompareNormalizationFileId(referenceSource, source, fileId),
       scaling: currentScaling,
       transpose: '1',
       mode: decision.mode,
