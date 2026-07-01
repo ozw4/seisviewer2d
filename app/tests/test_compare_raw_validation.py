@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.routers import section as section_router
 from app.main import app
+from app.services import raw_compare_validation
 
 
 class _ValidationReader:
@@ -99,7 +99,12 @@ def _install_readers(
         del state
         return readers[file_id]
 
-    monkeypatch.setattr(section_router, 'get_reader', _get_reader, raising=True)
+    monkeypatch.setattr(
+        raw_compare_validation,
+        'get_reader',
+        _get_reader,
+        raising=True,
+    )
 
 
 def _validate(client: TestClient) -> dict[str, Any]:
@@ -246,4 +251,3 @@ def test_compare_raw_validation_key2_order_mismatch(
         'b_count': 2,
     }
     assert 'key2_values' not in body['mismatch']
-
