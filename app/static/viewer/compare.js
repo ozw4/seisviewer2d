@@ -1,5 +1,6 @@
 (function () {
   const compareModels = window.__svCompareModels || {};
+  const compareSources = window.__svCompareSources || {};
   const {
     compareSourceId,
     normalizeCompareFileTarget,
@@ -8,6 +9,17 @@
     normalizeRecentDataset,
     compareRecentDatasetValue,
   } = compareModels;
+  const {
+    rawCompareSource,
+    buildCompareSourceCatalog,
+    resolveSourceDomain,
+    resolveCompareSource,
+    sourcePairKey,
+    isRawCompareSource,
+    resolveCompareNormalizationFileId,
+    shouldValidateRawCompareSources,
+    rawCompareValidationKey,
+  } = compareSources;
 
   for (const helper of [
     compareSourceId,
@@ -19,6 +31,21 @@
   ]) {
     if (typeof helper !== 'function') {
       throw new Error('compare/models.js must be loaded before compare.js');
+    }
+  }
+  for (const helper of [
+    rawCompareSource,
+    buildCompareSourceCatalog,
+    resolveSourceDomain,
+    resolveCompareSource,
+    sourcePairKey,
+    isRawCompareSource,
+    resolveCompareNormalizationFileId,
+    shouldValidateRawCompareSources,
+    rawCompareValidationKey,
+  ]) {
+    if (typeof helper !== 'function') {
+      throw new Error('compare/sources.js must be loaded before compare.js');
     }
   }
 
@@ -247,86 +274,11 @@
     return compareFileTargets;
   }
 
-  function compareTargetLabelName(target, displayNameCounts, displayNameSeen) {
-    const displayName = target.displayName;
-    if ((displayNameCounts.get(displayName) || 0) <= 1) return displayName;
-    const seen = displayNameSeen.get(displayName) || 0;
-    displayNameSeen.set(displayName, seen + 1);
-    if (seen === 0) return displayName;
-    const suffix = target.sourceSha256
-      ? target.sourceSha256.slice(0, 8)
-      : String(target.storeName || target.fileId || '').slice(0, 12);
-    return suffix ? `${displayName} [${suffix}]` : displayName;
-  }
-
-  function rawCompareSource(target, labelName = target.displayName) {
-    const sourceId = compareSourceId(target.fileId, 'raw');
-    return {
-      role: null,
-      id: 'raw',
-      sourceId,
-      fileId: target.fileId,
-      fileName: target.displayName,
-      key1Byte: target.key1Byte,
-      key2Byte: target.key2Byte,
-      layerId: 'raw',
-      label: `${labelName} / raw`,
-      pipelineKey: null,
-      tapLabel: null,
-      domain: 'amplitude',
-      available: true,
-    };
-  }
-
-  function tapCompareSource(target, tapLabel, options = {}) {
-    const sourceId = compareSourceId(target.fileId, 'tap', tapLabel);
-    return {
-      role: null,
-      id: tapLabel,
-      sourceId,
-      fileId: target.fileId,
-      fileName: target.displayName,
-      key1Byte: target.key1Byte,
-      key2Byte: target.key2Byte,
-      layerId: tapLabel,
-      label: `${target.displayName} / ${tapLabel}`,
-      pipelineKey: options.latestPipelineKey || null,
-      tapLabel,
-      domain: resolveSourceDomain(tapLabel, options.latestTapData),
-      available: !!options.latestPipelineKey,
-    };
-  }
-
-  function buildCompareSourceCatalog(targets, options = {}) {
-    const catalog = [];
-    const seen = new Set();
-    const layerValues = Array.isArray(options.layerValues) ? options.layerValues : ['raw'];
-    const normalizedTargets = (targets || [])
-      .map(normalizeCompareFileTarget)
-      .filter(Boolean);
-    const displayNameCounts = new Map();
-    for (const target of normalizedTargets) {
-      displayNameCounts.set(target.displayName, (displayNameCounts.get(target.displayName) || 0) + 1);
-    }
-    const displayNameSeen = new Map();
-    for (const target of normalizedTargets) {
-      if (!target || seen.has(target.fileId)) continue;
-      seen.add(target.fileId);
-      const labelName = compareTargetLabelName(target, displayNameCounts, displayNameSeen);
-      catalog.push(rawCompareSource(target, labelName));
-      if (!target.isActive) continue;
-      for (const layer of layerValues) {
-        const tapLabel = String(layer || '').trim();
-        if (!tapLabel || tapLabel === 'raw') continue;
-        catalog.push(tapCompareSource(target, tapLabel, options));
-      }
-    }
-    return catalog;
-  }
-
   function currentCompareSourceCatalog() {
-    return buildCompareSourceCatalog(syncCompareTargetsWithActive(), {
-      layerValues: getLayerSourceOptions(),
+    return buildCompareSourceCatalog({
+      targets: syncCompareTargetsWithActive(),
+      layerOptions: getLayerSourceOptions(),
+      activeFileId: window.currentFileId || '',
       latestPipelineKey: window.latestPipelineKey || null,
       latestTapData: window.latestTapData || {},
     });
@@ -425,20 +377,9 @@
     renderCompareDatasetList();
   }
 
-  function resolveSourceDomain(sourceId, tapDataByLabel = window.latestTapData) {
-    if (!sourceId || sourceId === 'raw') return 'amplitude';
-    const tapData = tapDataByLabel && tapDataByLabel[sourceId];
-    if (tapData && typeof tapData === 'object') {
-      const meta = tapData.meta;
-      if (meta && typeof meta.domain === 'string') return meta.domain;
-      if (Object.prototype.hasOwnProperty.call(tapData, 'prob')) return 'probability';
-    }
-    const lowered = String(sourceId).toLowerCase();
-    if (lowered.includes('fbpick') || lowered.includes('prob')) return 'probability';
-    return 'amplitude';
-  }
-
-  function resolveCompareSource(select, role) {
+  function getCompareSources() {
+    updateCompareSourceOptions();
+    const { sourceA, sourceB } = getCompareNodes();
     const catalog = currentCompareSourceCatalog();
     const activeRaw = catalog.find((source) => source.layerId === 'raw') || rawCompareSource({
       fileId: window.currentFileId || '',
@@ -447,17 +388,9 @@
       key2Byte: window.currentKey2Byte ?? null,
       isActive: true,
     });
-    const value = select?.value || activeRaw.sourceId;
-    const source = catalog.find((entry) => entry.sourceId === value) || activeRaw;
-    return { ...source, role };
-  }
-
-  function getCompareSources() {
-    updateCompareSourceOptions();
-    const { sourceA, sourceB } = getCompareNodes();
     return {
-      a: resolveCompareSource(sourceA, 'A'),
-      b: resolveCompareSource(sourceB, 'B'),
+      a: { ...(resolveCompareSource(catalog, sourceA?.value) || activeRaw), role: 'A' },
+      b: { ...(resolveCompareSource(catalog, sourceB?.value) || activeRaw), role: 'B' },
     };
   }
 
@@ -467,48 +400,8 @@
     return Array.isArray(key1Values) ? key1Values[idx] : undefined;
   }
 
-  function sourcePairKey(sources) {
-    return [
-      sources.a.fileId || '',
-      sources.a.layerId || sources.a.id || '',
-      sources.a.pipelineKey || '',
-      sources.a.tapLabel || '',
-      sources.b.fileId || '',
-      sources.b.layerId || sources.b.id || '',
-      sources.b.pipelineKey || '',
-      sources.b.tapLabel || '',
-    ].join('|');
-  }
-
   function canAttemptDiff(sources) {
     return sources.a.domain === sources.b.domain;
-  }
-
-  function isRawCompareSource(source) {
-    return (source?.layerId || source?.id || '') === 'raw';
-  }
-
-  function resolveCompareNormalizationFileId(source, referenceSource, fallbackFileId = null) {
-    if (!isRawCompareSource(source) || !isRawCompareSource(referenceSource)) return null;
-    const fileId = String(referenceSource?.fileId || source?.fileId || fallbackFileId || '').trim();
-    return fileId || null;
-  }
-
-  function shouldValidateRawCompareSources(sources) {
-    return isRawCompareSource(sources?.a)
-      && isRawCompareSource(sources?.b)
-      && !!sources.a.fileId
-      && !!sources.b.fileId
-      && sources.a.fileId !== sources.b.fileId;
-  }
-
-  function rawCompareValidationKey(sources, key1Byte, key2Byte) {
-    return [
-      sources.a.fileId,
-      sources.b.fileId,
-      key1Byte,
-      key2Byte,
-    ].map((value) => encodeURIComponent(String(value ?? ''))).join('|');
   }
 
   async function readCompareResponseDetail(response) {
@@ -1803,14 +1696,22 @@
     validateComparePair,
     subtractF32,
     payloadToF32,
+    activeCompareFileTarget: compareSources.activeCompareFileTarget,
+    compareTargetLabelName: compareSources.compareTargetLabelName,
+    rawCompareSource,
+    tapCompareSource: compareSources.tapCompareSource,
+    buildCompareSourceCatalog,
     resolveSourceDomain,
+    resolveCompareSource,
     sourcePairKey,
+    isRawCompareSource,
     normalizeCompareFileTarget,
     compareTargetDatasetKey,
     normalizeRecentDataset,
     compareRecentDatasetValue,
     resolveCompareRecentDataset,
     resolveCompareNormalizationFileId,
+    shouldValidateRawCompareSources,
     rawCompareValidationKey,
     validateRawCompareSources,
     ensureRawCompareReferenceBaseline,
@@ -1835,7 +1736,6 @@
     addCompareDatasetTarget,
     clearCompareDatasetTargets,
     resetCompareTargetsForActive,
-    buildCompareSourceCatalog,
     compareHeatmapScale,
     buildComparePanels,
     initCompareControls,

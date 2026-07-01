@@ -2,6 +2,7 @@ import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest';
 
 beforeAll(async () => {
   await import('../../static/viewer/compare/models.js');
+  await import('../../static/viewer/compare/sources.js');
   await import('../../static/viewer/compare.js');
 });
 
