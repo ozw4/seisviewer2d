@@ -121,6 +121,23 @@ def _validate(client: TestClient) -> dict[str, Any]:
     return response.json()
 
 
+def test_compare_raw_validate_route_registered_once() -> None:
+    def _collect_paths(routes: Sequence[Any]) -> list[str]:
+        paths: list[str] = []
+        for route in routes:
+            path = getattr(route, 'path', None)
+            if isinstance(path, str):
+                paths.append(path)
+            original_router = getattr(route, 'original_router', None)
+            if original_router is not None:
+                paths.extend(_collect_paths(original_router.routes))
+        return paths
+
+    paths = _collect_paths(app.routes)
+
+    assert paths.count('/compare/raw/validate') == 1
+
+
 def test_compare_raw_validation_matching_readers_ok(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

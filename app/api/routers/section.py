@@ -23,9 +23,6 @@ from app.services.pipeline_taps import (
     get_section_from_pipeline_tap,
 )
 from app.services.reader import get_reader
-from app.services.raw_compare_validation import (
-    validate_raw_compare_grid as validate_raw_compare_grid_service,
-)
 from app.services.section_service import (
     SectionServiceInternalError,
     build_section_offsets_payload,
@@ -177,29 +174,6 @@ def _build_section_offsets_cache_key(
         int(key2_byte),
         int(offset_byte),
     )
-
-
-@router.get('/compare/raw/validate')
-def validate_raw_compare_grid(
-    request: Request,
-    file_id_a: Annotated[str, Query(...)],
-    file_id_b: Annotated[str, Query(...)],
-    key1_byte: Annotated[int, Query()] = 189,
-    key2_byte: Annotated[int, Query()] = 193,
-) -> JSONResponse:
-    """Validate raw SGY A/B grid compatibility before compare execution."""
-    state = get_state(request.app)
-    try:
-        payload = validate_raw_compare_grid_service(
-            file_id_a=file_id_a,
-            file_id_b=file_id_b,
-            key1_byte=int(key1_byte),
-            key2_byte=int(key2_byte),
-            state=state,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return JSONResponse(content=payload)
 
 
 @router.get('/get_key1_values')
