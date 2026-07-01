@@ -26,7 +26,7 @@ from app.services.reader import get_reader
 from app.services.section_service import (
     SectionServiceInternalError,
     build_section_offsets_payload,
-    build_section_window_payload,
+    build_section_window_payload_for_request,
 )
 from app.services.section_window_request import SectionWindowRequest
 
@@ -485,8 +485,8 @@ def get_section_window_bin(
                 app=request.app,
                 include_arrays=False,
             )
-        compressed = build_section_window_payload(
-            **window_request.payload_kwargs(),
+        compressed = build_section_window_payload_for_request(
+            window_request,
             trace_stats_cache=state.trace_stats_cache,
             trace_stats_lock=state.lock,
             reader_getter=lambda fid, kb1, kb2: get_reader(fid, kb1, kb2, state=state),
