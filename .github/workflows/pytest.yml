@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version-file: .node-version
 
       - name: Configure Git LFS for pip VCS installs
         run: |
@@ -40,6 +40,11 @@ jobs:
         run: |
           python -m pip install -r .devcontainer/requirements-dev.txt
 
+      - name: Run Python guards
+        run: |
+          python -m compileall -q app
+          ruff check app
+
       - name: Install Python Playwright browsers
         run: |
           python -m playwright install --with-deps chromium
@@ -50,6 +55,11 @@ jobs:
           cd app
           npm ci
           npm run build
+
+      - name: Run frontend UI unit tests
+        run: |
+          cd app
+          npm run test:ui
 
       - name: Install root Playwright dependencies
         run: npm ci

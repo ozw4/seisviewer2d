@@ -23,9 +23,12 @@ python -m pip install -r .devcontainer/requirements-dev.txt
 
 2) Build the frontend bundle:
 
+Node.js 22 is the supported major version for frontend builds and Playwright
+dependencies. The repository root `.node-version` records this policy.
+
 ```bash
 cd app
-npm install
+npm ci
 npm run build
 ```
 
@@ -43,7 +46,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ### Dev container (recommended for GPU and browser testing)
 
 This repo includes a dev container based on an NVIDIA PyTorch image (see `Dockerfile`).
-It installs Python deps, Node 20, and Playwright.
+It installs Python deps, Node.js 22, and Playwright.
 
 ## What happens on upload
 
@@ -125,7 +128,7 @@ If you change frontend sources, rebuild with:
 
 ```bash
 cd app
-npm install
+npm ci
 npm run build
 ```
 

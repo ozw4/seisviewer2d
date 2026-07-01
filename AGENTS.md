@@ -21,7 +21,7 @@ Maintain `seisviewer2d`, a FastAPI application for browsing 2D seismic data from
 ## Checks
 Run after code changes:
 - `python -m compileall -q app`
-- `ruff app`
+- `ruff check app`
 - `pytest`
 
 If the issue touches browser behavior, also run:
