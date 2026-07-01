@@ -4,6 +4,7 @@
   const compareData = window.__svCompareData || {};
   const compareSources = window.__svCompareSources || {};
   const {
+    payloadDt,
     payloadToF32,
     subtractF32,
     rowsFromF32,
@@ -12,6 +13,7 @@
   const { sourcePairKey } = compareSources;
 
   for (const helper of [
+    payloadDt,
     payloadToF32,
     subtractF32,
     rowsFromF32,
@@ -29,9 +31,9 @@
   const AMP_LIMIT = 3.0;
 
   function sampleInterval(payload) {
-    const dt = Number(payload?.dt);
+    const dt = payloadDt(payload);
     if (Number.isFinite(dt) && dt > 0) return dt;
-    const fallback = Number(window.defaultDt);
+    const fallback = Number(window.defaultDt ?? defaultDt);
     return Number.isFinite(fallback) && fallback > 0 ? fallback : 0;
   }
 

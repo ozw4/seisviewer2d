@@ -54,6 +54,23 @@ function layoutFor(panels, render = compareRender()) {
   });
 }
 
+function withGlobalDefaultDt(value, fn) {
+  const hadWindowDefault = Object.prototype.hasOwnProperty.call(window, 'defaultDt');
+  const previousWindowDefault = window.defaultDt;
+  const hadGlobalDefault = Object.prototype.hasOwnProperty.call(globalThis, 'defaultDt');
+  const previousGlobalDefault = globalThis.defaultDt;
+  delete window.defaultDt;
+  globalThis.defaultDt = value;
+  try {
+    fn();
+  } finally {
+    if (hadWindowDefault) window.defaultDt = previousWindowDefault;
+    else delete window.defaultDt;
+    if (hadGlobalDefault) globalThis.defaultDt = previousGlobalDefault;
+    else delete globalThis.defaultDt;
+  }
+}
+
 test('diff enabled builds three compare panels and layout axes', () => {
   const render = compareRender();
   const panels = renderHelpers().buildComparePanels({ render, showDiff: true });
@@ -111,6 +128,37 @@ test('wiggle mode preserves compare axis suffix assignment', () => {
   expect(traces.slice(3, 6).map((trace) => trace.xaxis)).toEqual(['x2', 'x2', 'x2']);
   expect(traces.slice(6, 9).map((trace) => trace.xaxis)).toEqual(['x3', 'x3', 'x3']);
   expect(renderHelpers().axisLayoutName('y', 2)).toBe('yaxis3');
+});
+
+test('payloads without dt use the default sample interval for layout and traces', () => {
+  withGlobalDefaultDt(0.006, () => {
+    const render = compareRender({
+      aPayload: payload({ dt: undefined }),
+      bPayload: payload({
+        dt: undefined,
+        values: new Float32Array([0.5, 1, 1.5, 2]),
+      }),
+    });
+    const panels = renderHelpers().buildComparePanels({ render, showDiff: true });
+    const layout = layoutFor(panels, render);
+    const heatmapTrace = renderHelpers().buildCompareHeatmapTrace({
+      panel: panels[0],
+      axisIndex: 0,
+      render,
+    });
+    const wiggleTraces = renderHelpers().buildCompareWiggleTraces({
+      panel: panels[0],
+      axisIndex: 0,
+      render,
+    });
+
+    expect(layout.yaxis.range[0]).toBeCloseTo(0.012, 9);
+    expect(layout.yaxis.range[1]).toBeCloseTo(0, 9);
+    expect(heatmapTrace.y[0]).toBeCloseTo(0, 9);
+    expect(heatmapTrace.y[1]).toBeCloseTo(0.006, 9);
+    expect(wiggleTraces[2].y[0]).toBeCloseTo(0, 9);
+    expect(wiggleTraces[2].y[1]).toBeCloseTo(0.006, 9);
+  });
 });
 
 test('unavailable figure has no data and carries the message annotation', () => {
