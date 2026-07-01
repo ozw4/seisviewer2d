@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 import time
 
@@ -33,50 +32,8 @@ from app.services.job_runner import (
     ensure_job_not_cancelled,
     run_job_with_lifecycle,
 )
-from app.services.pipeline_artifacts import get_job_dir
+from app.services.jobs import JobContext
 from app.services.reader import get_reader
-
-
-@dataclass
-class _GeometryLinkageLifecycle:
-    created_ts: float
-    job_dir: Path | None = None
-
-
-def _resolve_created_ts(state: AppState, job_id: str) -> float:
-    with state.lock:
-        job = state.jobs.get(job_id)
-        if job is None:
-            return time.time()
-        created_ts_obj = job.get('created_ts')
-    return (
-        float(created_ts_obj)
-        if isinstance(created_ts_obj, (int, float))
-        else time.time()
-    )
-
-
-def _resolve_job_dir(state: AppState, job_id: str) -> Path:
-    with state.lock:
-        job = state.jobs.get(job_id)
-        artifacts_dir = job.get('artifacts_dir') if isinstance(job, dict) else None
-    if isinstance(artifacts_dir, str) and artifacts_dir:
-        return Path(artifacts_dir)
-    return get_job_dir(job_id)
-
-
-def _set_job_progress_message(
-    state: AppState,
-    job_id: str,
-    *,
-    progress: float,
-    message: str,
-) -> None:
-    with state.lock:
-        if state.jobs.get(job_id) is None:
-            return
-        state.jobs.set_progress(job_id, progress)
-        state.jobs.set_message(job_id, message)
 
 
 def _write_job_meta(
@@ -121,34 +78,26 @@ def _run_geometry_linkage_build_job_body(
     job_id: str,
     req: StaticLinkageBuildRequest,
     state: AppState,
-    *,
-    lifecycle: _GeometryLinkageLifecycle,
 ) -> JobCompletion | None:
-    job_dir = _resolve_job_dir(state, job_id)
+    ctx = JobContext.resolve(state, job_id)
+    job_dir = ctx.job_dir
     job_dir.mkdir(parents=True, exist_ok=True)
-    lifecycle.job_dir = job_dir
 
-    _set_job_progress_message(
-        state,
-        job_id,
+    ctx.set_progress_message(
         progress=0.02,
         message='preparing_geometry_linkage_job',
     )
     _write_job_meta(job_id=job_id, job_dir=job_dir, req=req)
     ensure_job_not_cancelled(state, job_id)
 
-    _set_job_progress_message(
-        state,
-        job_id,
+    ctx.set_progress_message(
         progress=0.05,
         message='resolving_trace_store_reader',
     )
     reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
     ensure_job_not_cancelled(state, job_id)
 
-    _set_job_progress_message(
-        state,
-        job_id,
+    ctx.set_progress_message(
         progress=0.15,
         message='validating_geometry_linkage_headers',
     )
@@ -164,9 +113,7 @@ def _run_geometry_linkage_build_job_body(
     )
     ensure_job_not_cancelled(state, job_id)
 
-    _set_job_progress_message(
-        state,
-        job_id,
+    ctx.set_progress_message(
         progress=0.30,
         message='building_endpoint_geometry_tables',
     )
@@ -176,9 +123,7 @@ def _run_geometry_linkage_build_job_body(
     )
     ensure_job_not_cancelled(state, job_id)
 
-    _set_job_progress_message(
-        state,
-        job_id,
+    ctx.set_progress_message(
         progress=0.50,
         message='building_geometry_linkage',
     )
@@ -193,9 +138,7 @@ def _run_geometry_linkage_build_job_body(
     )
     ensure_job_not_cancelled(state, job_id)
 
-    _set_job_progress_message(
-        state,
-        job_id,
+    ctx.set_progress_message(
         progress=0.75,
         message='writing_geometry_linkage_artifacts',
     )
@@ -219,9 +162,7 @@ def _run_geometry_linkage_build_job_body(
     )
     ensure_job_not_cancelled(state, job_id)
 
-    _set_job_progress_message(
-        state,
-        job_id,
+    ctx.set_progress_message(
         progress=0.90,
         message='validating_geometry_linkage_artifacts',
     )
@@ -233,20 +174,16 @@ def _run_geometry_linkage_build_job_body(
     )
     ensure_job_not_cancelled(state, job_id)
 
-    _set_job_progress_message(state, job_id, progress=1.0, message='done')
+    ctx.set_progress_message(progress=1.0, message='done')
     return JobCompletion(finished_ts=time.time())
 
 
-def _handle_geometry_linkage_job_error(
-    *,
-    lifecycle: _GeometryLinkageLifecycle,
-) -> JobFailure:
+def _handle_geometry_linkage_job_error() -> JobFailure:
     return JobFailure(finished_ts=time.time())
 
 
 def _handle_geometry_linkage_job_cancel(
     *,
-    lifecycle: _GeometryLinkageLifecycle,
     exc: JobCancelledError,
 ) -> JobCompletion:
     finished_ts = float(exc.finished_ts) if exc.finished_ts is not None else time.time()
@@ -259,14 +196,11 @@ def run_geometry_linkage_build_job(
     state: AppState,
 ) -> None:
     """Build geometry linkage artifacts for a statics job."""
-    lifecycle = _GeometryLinkageLifecycle(created_ts=_resolve_created_ts(state, job_id))
-
     def worker() -> JobCompletion | None:
         return _run_geometry_linkage_build_job_body(
             job_id=job_id,
             req=req,
             state=state,
-            lifecycle=lifecycle,
         )
 
     run_job_with_lifecycle(
@@ -276,11 +210,8 @@ def run_geometry_linkage_build_job(
         progress_1_on_done=True,
         start_progress=0.0,
         clear_message_on_start=True,
-        on_error=lambda _exc: _handle_geometry_linkage_job_error(
-            lifecycle=lifecycle,
-        ),
+        on_error=lambda _exc: _handle_geometry_linkage_job_error(),
         on_cancel=lambda exc: _handle_geometry_linkage_job_cancel(
-            lifecycle=lifecycle,
             exc=exc,
         ),
     )
