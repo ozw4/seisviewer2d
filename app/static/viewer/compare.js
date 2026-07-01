@@ -1,16 +1,33 @@
 (function () {
-  const compareModels = window.__svCompareModels || {};
-  const compareSources = window.__svCompareSources || {};
-  const compareData = window.__svCompareData || {};
-  const compareRender = window.__svCompareRender || {};
-  const compareApi = window.__svCompareApi || {};
+  const compareDeps = {
+    models: window.__svCompareModels,
+    sources: window.__svCompareSources,
+    data: window.__svCompareData,
+    render: window.__svCompareRender,
+    api: window.__svCompareApi,
+  };
+
+  for (const [name, mod] of Object.entries(compareDeps)) {
+    if (!mod) throw new Error(`compare/${name}.js must be loaded before compare.js`);
+  }
+
+  const compareModels = compareDeps.models;
+  const compareSources = compareDeps.sources;
+  const compareData = compareDeps.data;
+  const compareRender = compareDeps.render;
+  const compareApi = compareDeps.api;
   const {
     compareSourceId,
     normalizeCompareFileTarget,
     compareTargetDatasetKey,
     compareTargetIdentity,
+    resetCompareTargetsForActive,
+    clearCompareDatasetTargets,
     normalizeRecentDataset,
     compareRecentDatasetValue,
+    addCompareDatasetTarget,
+    resolveCompareRecentDataset,
+    datasetMatchesActiveKeys,
   } = compareModels;
   const {
     rawCompareSource,
@@ -61,8 +78,13 @@
     normalizeCompareFileTarget,
     compareTargetDatasetKey,
     compareTargetIdentity,
+    resetCompareTargetsForActive,
+    clearCompareDatasetTargets,
     normalizeRecentDataset,
     compareRecentDatasetValue,
+    addCompareDatasetTarget,
+    resolveCompareRecentDataset,
+    datasetMatchesActiveKeys,
   ]) {
     if (typeof helper !== 'function') {
       throw new Error('compare/models.js must be loaded before compare.js');
@@ -228,50 +250,6 @@
     });
   }
 
-  function addCompareDatasetTarget(targets, candidate, activeTarget) {
-    const active = normalizeCompareFileTarget(activeTarget);
-    const nextTarget = normalizeCompareFileTarget(candidate);
-    if (!active) return { targets: [], added: false, reason: 'Open a dataset before adding compare targets.' };
-    if (!nextTarget) {
-      return {
-        targets: resetCompareTargetsForActive(targets, active),
-        added: false,
-        reason: 'Compare dataset could not be opened.',
-      };
-    }
-    if (nextTarget.key1Byte !== active.key1Byte || nextTarget.key2Byte !== active.key2Byte) {
-      return {
-        targets: resetCompareTargetsForActive(targets, active),
-        added: false,
-        reason: 'Dataset key bytes do not match the active file.',
-      };
-    }
-    const next = resetCompareTargetsForActive(targets, active);
-    const nextDatasetKey = compareTargetDatasetKey(nextTarget);
-    if (nextDatasetKey && next.some((target) => compareTargetDatasetKey(target) === nextDatasetKey)) {
-      return { targets: next, added: false, reason: 'Dataset is already added.' };
-    }
-    return { targets: [...next, { ...nextTarget, isActive: false }], added: true, reason: '' };
-  }
-
-  function resetCompareTargetsForActive(targets, activeTarget) {
-    const active = normalizeCompareFileTarget(activeTarget);
-    if (!active) return [];
-    const activeKey = compareTargetIdentity(active);
-    const current = Array.isArray(targets) ? targets : [];
-    if (current.length === 0 || compareTargetIdentity(current[0]) !== activeKey) {
-      return [{ ...active, isActive: true }];
-    }
-    return [{ ...active, isActive: true }, ...current.slice(1).map((target) => ({
-      ...target,
-      isActive: false,
-    }))];
-  }
-
-  function clearCompareDatasetTargets(targets, activeTarget) {
-    return resetCompareTargetsForActive([], activeTarget);
-  }
-
   function resetCompareTargetsForActiveFile() {
     clearRawCompareValidationCache();
     compareActiveTargetKey = '';
@@ -347,20 +325,6 @@
       latestPipelineKey: window.latestPipelineKey || null,
       latestTapData: window.latestTapData || {},
     });
-  }
-
-  function resolveCompareRecentDataset(datasets, selectedValue) {
-    if (!selectedValue) return null;
-    return (Array.isArray(datasets) ? datasets : [])
-      .map(normalizeRecentDataset)
-      .find((dataset) => dataset && compareRecentDatasetValue(dataset) === selectedValue) || null;
-  }
-
-  function datasetMatchesActiveKeys(dataset, activeTarget) {
-    const active = normalizeCompareFileTarget(activeTarget);
-    return !!active
-      && Number(dataset?.key1Byte) === active.key1Byte
-      && Number(dataset?.key2Byte) === active.key2Byte;
   }
 
   function renderCompareDatasetPicker() {
@@ -1334,27 +1298,11 @@
   window.clearCompareRender = clearCompareRender;
   window.resetCompareTargetsForActiveFile = resetCompareTargetsForActiveFile;
   window.__svCompare = {
-    validateComparePair,
-    subtractF32,
-    payloadToF32,
-    activeCompareFileTarget: compareSources.activeCompareFileTarget,
-    compareTargetLabelName: compareSources.compareTargetLabelName,
-    rawCompareSource,
-    tapCompareSource: compareSources.tapCompareSource,
-    buildCompareSourceCatalog,
-    resolveSourceDomain,
-    resolveCompareSource,
-    sourcePairKey,
-    isRawCompareSource,
-    normalizeCompareFileTarget,
-    compareTargetDatasetKey,
-    normalizeRecentDataset,
-    compareRecentDatasetValue,
-    resolveCompareRecentDataset,
-    resolveCompareNormalizationFileId,
-    shouldValidateRawCompareSources,
-    rawCompareValidationKey,
-    readCompareResponseDetail,
+    ...compareDeps.models,
+    ...compareDeps.sources,
+    ...compareDeps.data,
+    ...compareDeps.render,
+    ...compareDeps.api,
     validateRawCompareSources,
     ensureRawCompareReferenceBaseline,
     fetchComparePayload,
@@ -1373,12 +1321,10 @@
     clearRawCompareValidationCache,
     compareUnavailableMessage,
     buildCompareRequest,
+    fetchCompareAndPlot,
     addSelectedCompareDataset,
     importCompareBSourceFile,
     compareSourceId,
-    addCompareDatasetTarget,
-    clearCompareDatasetTargets,
-    resetCompareTargetsForActive,
     compareHeatmapScale,
     buildComparePanels: buildComparePanelsForCurrentState,
     buildCompareLayout: buildCompareLayoutForCurrentState,

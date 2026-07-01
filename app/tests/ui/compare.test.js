@@ -1,3 +1,6 @@
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
 import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest';
 
 beforeAll(async () => {
@@ -17,6 +20,37 @@ beforeEach(() => {
     <input id="cmReverse" type="checkbox">
   `;
 });
+
+async function importFreshCompareController() {
+  const url = pathToFileURL(resolve(process.cwd(), 'static/viewer/compare.js'));
+  url.search = `test=${Date.now()}-${Math.random()}`;
+  return import(/* @vite-ignore */ url.href);
+}
+
+const compareControllerGlobalKeys = [
+  'isCompareModeEnabled',
+  'compareShowDiffEnabled',
+  'updateCompareSourceOptions',
+  'fetchCompareAndPlot',
+  'renderCompareLatestView',
+  'compareCurrentDesiredMode',
+  'checkCompareModeFlipAndRefetch',
+  'handleCompareRelayout',
+  'snapshotCompareAxesRangesFromDOM',
+  'clearCompareRender',
+  'resetCompareTargetsForActiveFile',
+  '__svCompare',
+];
+
+function snapshotCompareControllerGlobals() {
+  return Object.fromEntries(compareControllerGlobalKeys.map((key) => [key, window[key]]));
+}
+
+function restoreCompareControllerGlobals(snapshot) {
+  for (const key of compareControllerGlobalKeys) {
+    window[key] = snapshot[key];
+  }
+}
 
 afterEach(() => {
   window.__svCompare.setLatestCompareRenderForTest(null);
@@ -171,6 +205,58 @@ function expectF32Values(actual, expected) {
     expect(actual[index]).toBeCloseTo(value, 6);
   });
 }
+
+test('compare controller reports explicit load order error without helper modules', async () => {
+  const previous = {
+    models: window.__svCompareModels,
+    sources: window.__svCompareSources,
+    data: window.__svCompareData,
+    render: window.__svCompareRender,
+    api: window.__svCompareApi,
+    facade: window.__svCompare,
+  };
+  delete window.__svCompareModels;
+  delete window.__svCompareSources;
+  delete window.__svCompareData;
+  delete window.__svCompareRender;
+  delete window.__svCompareApi;
+  delete window.__svCompare;
+
+  try {
+    await expect(importFreshCompareController())
+      .rejects.toThrow('compare/models.js must be loaded before compare.js');
+    expect(window.__svCompare).toBeUndefined();
+  } finally {
+    window.__svCompareModels = previous.models;
+    window.__svCompareSources = previous.sources;
+    window.__svCompareData = previous.data;
+    window.__svCompareRender = previous.render;
+    window.__svCompareApi = previous.api;
+    window.__svCompare = previous.facade;
+  }
+});
+
+test('compare controller builds test facade from loaded helper modules', async () => {
+  const previousGlobals = snapshotCompareControllerGlobals();
+  delete window.__svCompare;
+
+  try {
+    await importFreshCompareController();
+
+    expect(window.__svCompare).toMatchObject({
+      compareSourceId: expect.any(Function),
+      buildCompareSourceCatalog: expect.any(Function),
+      payloadToF32: expect.any(Function),
+      buildCompareLayout: expect.any(Function),
+      readCompareResponseDetail: expect.any(Function),
+      buildCompareRequest: expect.any(Function),
+      fetchCompareAndPlot: expect.any(Function),
+      initCompareControls: expect.any(Function),
+    });
+  } finally {
+    restoreCompareControllerGlobals(previousGlobals);
+  }
+});
 
 test('compare heatmap scales mixed-domain source panels independently', () => {
   expect(scale({ kind: 'source', domain: 'amplitude' })).toMatchObject({
