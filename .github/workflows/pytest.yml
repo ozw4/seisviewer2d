@@ -56,6 +56,11 @@ jobs:
           npm ci
           npm run build
 
+      - name: Run frontend UI unit tests
+        run: |
+          cd app
+          npm run test:ui
+
       - name: Install root Playwright dependencies
         run: npm ci
 
