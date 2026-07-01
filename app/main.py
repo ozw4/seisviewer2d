@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routers.batch_apply import router as batch_apply_router
+from app.api.routers.compare import router as compare_router
 from app.api.routers.fbpick import router as fbpick_router
 from app.api.routers.fbpick_predict import router as fbpick_predict_router
 from app.api.routers.picks import router as picks_router
@@ -42,6 +43,7 @@ app.mount(
 
 # エンドポイント登録
 app.include_router(upload_router)
+app.include_router(compare_router)
 app.include_router(section_router)
 app.include_router(fbpick_router)
 app.include_router(fbpick_predict_router)
