@@ -28,6 +28,7 @@ from app.services.section_service import (
     build_section_offsets_payload,
     build_section_window_payload,
 )
+from app.services.section_window_request import SectionWindowRequest
 
 router = APIRouter()
 
@@ -422,50 +423,45 @@ def get_section_window_bin(
 ) -> Response:
     """Return a quantized window of a section, optionally via a pipeline tap."""
     route_started = time.perf_counter()
+    try:
+        window_request = SectionWindowRequest(
+            file_id=file_id,
+            key1=key1,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            normalization_file_id=normalization_file_id,
+            offset_byte=offset_byte,
+            x0=x0,
+            x1=x1,
+            y0=y0,
+            y1=y1,
+            step_x=step_x,
+            step_y=step_y,
+            transpose=transpose,
+            pipeline_key=pipeline_key,
+            tap_label=tap_label,
+            reference_pipeline_key=reference_pipeline_key,
+            reference_tap_label=reference_tap_label,
+            scaling=scaling,
+            lmo_enabled=lmo_enabled,
+            lmo_velocity_mps=lmo_velocity_mps,
+            lmo_offset_byte=lmo_offset_byte,
+            lmo_offset_scale=lmo_offset_scale,
+            lmo_offset_mode=lmo_offset_mode,
+            lmo_ref_mode=lmo_ref_mode,
+            lmo_ref_trace=lmo_ref_trace,
+            lmo_polarity=lmo_polarity,
+            default_fbpick_model_id=DEFAULT_FBPICK_MODEL_ID,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     state = get_state(request.app)
-    mode = 'amax' if scaling is None else scaling
-    mode = mode.lower()
-    if mode not in {'amax', 'tracewise'}:
-        raise HTTPException(status_code=400, detail='Unsupported scaling mode')
-    resolved_normalization_file_id = normalization_file_id or file_id
-    uses_pipeline_source = bool(pipeline_key) or bool(tap_label)
-    uses_reference_source = bool(reference_pipeline_key) or bool(reference_tap_label)
-    normalization_applies_to_raw = not uses_pipeline_source and not uses_reference_source
-    raw_normalization_file_id = (
-        resolved_normalization_file_id
-        if normalization_applies_to_raw
-        else file_id
-    )
-    uses_offset = "offset" in DEFAULT_FBPICK_MODEL_ID.lower()
-    forced_offset_byte = OFFSET_BYTE_FIXED if uses_offset else offset_byte
-    cache_key = _build_window_section_cache_key(
-        file_id=file_id,
-        normalization_file_id=raw_normalization_file_id,
-        key1=key1,
-        key1_byte=key1_byte,
-        key2_byte=key2_byte,
-        offset_byte=forced_offset_byte,
-        x0=x0,
-        x1=x1,
-        y0=y0,
-        y1=y1,
-        step_x=step_x,
-        step_y=step_y,
-        transpose=transpose,
-        pipeline_key=pipeline_key,
-        tap_label=tap_label,
-        reference_pipeline_key=reference_pipeline_key,
-        reference_tap_label=reference_tap_label,
-        scaling_mode=mode,
-        lmo_enabled=lmo_enabled,
-        lmo_velocity_mps=lmo_velocity_mps,
-        lmo_offset_byte=lmo_offset_byte,
-        lmo_offset_scale=lmo_offset_scale,
-        lmo_offset_mode=lmo_offset_mode,
-        lmo_ref_mode=lmo_ref_mode,
-        lmo_ref_trace=lmo_ref_trace,
-        lmo_polarity=lmo_polarity,
-    )
+    mode = window_request.scaling_mode
+    raw_normalization_file_id = window_request.raw_normalization_file_id
+    normalization_applies_to_raw = window_request.normalization_applies_to_raw
+    forced_offset_byte = window_request.offset_byte_for_payload
+    cache_key = window_request.cache_key()
 
     with state.lock:
         cached_payload = state.window_section_cache.get(cache_key)
