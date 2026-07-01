@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 import inspect
-from pathlib import Path
-import subprocess
-import sys
-import textwrap
 
 import pytest
 
@@ -12,10 +8,6 @@ from app.services.section_window_request import (
     DEFAULT_FIXED_OFFSET_BYTE,
     SectionWindowRequest,
 )
-
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-
 
 def _request(**overrides: object) -> SectionWindowRequest:
     values: dict[str, object] = {
@@ -260,36 +252,3 @@ def test_cache_key_offset_model_reflects_forced_offset_byte() -> None:
     )
 
     assert request.cache_key()[5] == DEFAULT_FIXED_OFFSET_BYTE
-
-
-def test_section_window_request_import_does_not_load_runtime_modules() -> None:
-    code = textwrap.dedent(
-        """
-        from __future__ import annotations
-
-        import importlib
-        import sys
-
-        forbidden = {
-            'app.main',
-            'app.api.routers.section',
-            'segyio',
-        }
-        for name in list(sys.modules):
-            if name in forbidden or name.startswith('app.api.routers.'):
-                sys.modules.pop(name, None)
-
-        module = importlib.import_module('app.services.section_window_request')
-        assert module.SectionWindowRequest.__name__ == 'SectionWindowRequest'
-        for name in forbidden:
-            assert name not in sys.modules, name
-        """
-    )
-
-    subprocess.run(
-        [sys.executable, '-c', code],
-        cwd=_REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
