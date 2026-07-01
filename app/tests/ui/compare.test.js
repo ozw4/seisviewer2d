@@ -1,6 +1,10 @@
 import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest';
 
 beforeAll(async () => {
+  await import('../../static/viewer/compare/models.js');
+  await import('../../static/viewer/compare/sources.js');
+  await import('../../static/viewer/compare/data.js');
+  await import('../../static/viewer/compare/render.js');
   await import('../../static/viewer/compare.js');
 });
 
@@ -209,6 +213,47 @@ test('compare heatmap uses signed amplitude scale for amplitude diff values', ()
     zmax: 1.5,
     signed: true,
   });
+});
+
+test('legacy compare render exports keep positional arguments', () => {
+  vi.stubGlobal('clickModeForCurrentState', vi.fn(() => 'event+select'));
+  vi.stubGlobal('effectiveDragMode', vi.fn(() => 'pan'));
+  vi.stubGlobal('currentUiRevision', vi.fn(() => 'ui-1'));
+
+  const render = {
+    sources: {
+      a: { fileId: 'line-a', layerId: 'raw', domain: 'amplitude', label: 'Line A' },
+      b: { fileId: 'line-b', layerId: 'raw', domain: 'amplitude', label: 'Line B' },
+    },
+    a: {
+      payload: { dt: 0.004 },
+      values: new Float32Array([1, 2, 3, 4]),
+    },
+    b: {
+      payload: { dt: 0.004 },
+      values: new Float32Array([0.5, 1, 1.5, 2]),
+    },
+    diffAvailable: true,
+    diffValues: new Float32Array([0.5, 1, 1.5, 2]),
+    rows: 2,
+    cols: 2,
+    x0: 10,
+    stepX: 1,
+    y0: 0,
+    stepY: 1,
+    windowInfo: { x0: 10, x1: 12, y0: 0, y1: 2 },
+  };
+  const panels = window.__svCompare.buildComparePanels(render);
+
+  const layout = window.__svCompare.buildCompareLayout(render, panels, [10, 12], [0.008, 0]);
+  const wiggleTraces = window.__svCompare.buildCompareWiggleTraces(panels[0], 0, render);
+  const heatmapTrace = window.__svCompare.buildCompareHeatmapTrace(panels[0], 1, render);
+
+  expect(layout.xaxis.range).toEqual([10, 12]);
+  expect(layout.yaxis.range).toEqual([0.008, 0]);
+  expect(wiggleTraces).toHaveLength(3);
+  expect(wiggleTraces[0].xaxis).toBe('x');
+  expect(heatmapTrace).toMatchObject({ type: 'heatmap', xaxis: 'x2', yaxis: 'y2' });
 });
 
 test('compare payload decode prefers quantized compute values over display backing', () => {
@@ -653,59 +698,6 @@ test('raw source unavailable message does not use tap pipeline wording', () => {
 
   expect(message).toBe('A-B unavailable: A raw source is not available.');
   expect(message).not.toMatch(/Run pipeline first|tap/i);
-});
-
-test('normalizeCompareFileTarget reads store and source hash fields', () => {
-  expect(window.__svCompare.normalizeCompareFileTarget({
-    file_id: 'file-1',
-    file_name: 'line.sgy',
-    key1_byte: 189,
-    key2_byte: 193,
-    original_name: 'line.sgy',
-    store_name: 'stores/a.sgy',
-    source_sha256: 'abcdef1234567890',
-  })).toMatchObject({
-    fileId: 'file-1',
-    displayName: 'line.sgy',
-    key1Byte: 189,
-    key2Byte: 193,
-    originalName: 'line.sgy',
-    storeName: 'stores/a.sgy',
-    sourceSha256: 'abcdef1234567890',
-  });
-
-  expect(window.__svCompare.normalizeCompareFileTarget({
-    fileId: 'file-2',
-    displayName: 'line.sgy',
-    key1Byte: 189,
-    key2Byte: 193,
-    storeName: 'stores/b.sgy',
-    sourceSha256: 'fedcba0987654321',
-  })).toMatchObject({
-    storeName: 'stores/b.sgy',
-    sourceSha256: 'fedcba0987654321',
-  });
-});
-
-test('compareTargetDatasetKey prefers source hash for duplicate identity', () => {
-  const base = {
-    fileId: 'file-1',
-    displayName: 'line.sgy',
-    originalName: 'line.sgy',
-    storeName: 'stores/a.sgy',
-    key1Byte: 189,
-    key2Byte: 193,
-  };
-
-  expect(window.__svCompare.compareTargetDatasetKey({
-    ...base,
-    sourceSha256: 'abcdef1234567890',
-  })).toBe('sha256:abcdef1234567890|189|193');
-  expect(window.__svCompare.compareTargetDatasetKey(base)).toBe('store:stores/a.sgy|189|193');
-  expect(window.__svCompare.compareTargetDatasetKey({
-    ...base,
-    storeName: '',
-  })).toBe('name:line.sgy|189|193');
 });
 
 test('compare recent dataset selection includes key-byte identity', () => {

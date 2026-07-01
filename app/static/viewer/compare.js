@@ -1,6 +1,110 @@
 (function () {
-  const AXIS_MARGIN = 0.035;
-  const AMP_LIMIT = 3.0;
+  const compareModels = window.__svCompareModels || {};
+  const compareSources = window.__svCompareSources || {};
+  const compareData = window.__svCompareData || {};
+  const compareRender = window.__svCompareRender || {};
+  const {
+    compareSourceId,
+    normalizeCompareFileTarget,
+    compareTargetDatasetKey,
+    compareTargetIdentity,
+    normalizeRecentDataset,
+    compareRecentDatasetValue,
+  } = compareModels;
+  const {
+    rawCompareSource,
+    buildCompareSourceCatalog,
+    resolveSourceDomain,
+    resolveCompareSource,
+    sourcePairKey,
+    isRawCompareSource,
+    resolveCompareNormalizationFileId,
+    shouldValidateRawCompareSources,
+    rawCompareValidationKey,
+  } = compareSources;
+  const {
+    payloadShapeInfo,
+    payloadInvScale,
+    payloadHasComputeValues,
+    canUseCachedComparePayload,
+    sourceDomain,
+    payloadToF32,
+    sameShape,
+    sameGrid,
+    validateComparePair,
+    subtractF32,
+    compareHeatmapScale,
+  } = compareData;
+  const {
+    axisSuffix,
+    axisLayoutName,
+    buildCompareLayout,
+    buildCompareWiggleTraces,
+    buildCompareHeatmapTrace,
+    buildComparePanels: buildComparePanelModels,
+    buildCompareRender: buildCompareRenderModel,
+    buildCompareUnavailableFigure,
+  } = compareRender;
+
+  for (const helper of [
+    compareSourceId,
+    normalizeCompareFileTarget,
+    compareTargetDatasetKey,
+    compareTargetIdentity,
+    normalizeRecentDataset,
+    compareRecentDatasetValue,
+  ]) {
+    if (typeof helper !== 'function') {
+      throw new Error('compare/models.js must be loaded before compare.js');
+    }
+  }
+  for (const helper of [
+    rawCompareSource,
+    buildCompareSourceCatalog,
+    resolveSourceDomain,
+    resolveCompareSource,
+    sourcePairKey,
+    isRawCompareSource,
+    resolveCompareNormalizationFileId,
+    shouldValidateRawCompareSources,
+    rawCompareValidationKey,
+  ]) {
+    if (typeof helper !== 'function') {
+      throw new Error('compare/sources.js must be loaded before compare.js');
+    }
+  }
+  for (const helper of [
+    payloadShapeInfo,
+    payloadInvScale,
+    payloadHasComputeValues,
+    canUseCachedComparePayload,
+    sourceDomain,
+    payloadToF32,
+    sameShape,
+    sameGrid,
+    validateComparePair,
+    subtractF32,
+    compareHeatmapScale,
+  ]) {
+    if (typeof helper !== 'function') {
+      throw new Error('compare/data.js must be loaded before compare.js');
+    }
+  }
+  for (const helper of [
+    axisSuffix,
+    axisLayoutName,
+    buildCompareLayout,
+    buildCompareWiggleTraces,
+    buildCompareHeatmapTrace,
+    buildComparePanelModels,
+    buildCompareRenderModel,
+    buildCompareUnavailableFigure,
+  ]) {
+    if (typeof helper !== 'function') {
+      throw new Error('compare/render.js must be loaded before compare.js');
+    }
+  }
+
   const COMPARE_CACHE_PURPOSE = 'compare';
   const COMPARE_RENDER_SLOT = 'compare-window';
   const SECTION_RENDER_SLOT = 'section-window';
@@ -100,43 +204,6 @@
     return unique;
   }
 
-  function compareSourceId(fileId, layerId, tapLabel = null) {
-    const encodedFileId = encodeURIComponent(String(fileId || ''));
-    if (layerId === 'raw') return `file:${encodedFileId}:raw`;
-    return `file:${encodedFileId}:tap:${encodeURIComponent(String(tapLabel || layerId || ''))}`;
-  }
-
-  function normalizeCompareFileTarget(candidate) {
-    if (!candidate || typeof candidate !== 'object') return null;
-    const fileId = String(candidate.fileId ?? candidate.file_id ?? '').trim();
-    if (!fileId) return null;
-    const displayName = String(
-      candidate.displayName ?? candidate.fileName ?? candidate.file_name ?? candidate.name ?? fileId,
-    ).trim() || fileId;
-    const key1Byte = Number(candidate.key1Byte ?? candidate.key1_byte);
-    const key2Byte = Number(candidate.key2Byte ?? candidate.key2_byte);
-    return {
-      fileId,
-      displayName,
-      key1Byte: Number.isFinite(key1Byte) ? key1Byte : null,
-      key2Byte: Number.isFinite(key2Byte) ? key2Byte : null,
-      isActive: candidate.isActive === true,
-      originalName: String(candidate.originalName ?? candidate.original_name ?? '').trim(),
-      storeName: String(candidate.storeName ?? candidate.store_name ?? '').trim(),
-      sourceSha256: String(candidate.sourceSha256 ?? candidate.source_sha256 ?? '').trim(),
-    };
-  }
-
-  function compareTargetDatasetKey(target) {
-    const normalized = normalizeCompareFileTarget(target);
-    if (!normalized) return '';
-    const keyBytes = `${normalized.key1Byte ?? ''}|${normalized.key2Byte ?? ''}`;
-    if (normalized.sourceSha256) return `sha256:${normalized.sourceSha256}|${keyBytes}`;
-    if (normalized.storeName) return `store:${normalized.storeName}|${keyBytes}`;
-    const name = String(normalized.originalName || normalized.displayName || '').trim();
-    return `name:${name}|${keyBytes}`;
-  }
-
   function activeCompareFileTarget() {
     return normalizeCompareFileTarget({
       fileId: window.currentFileId || '',
@@ -148,12 +215,6 @@
       storeName: '',
       sourceSha256: '',
     });
-  }
-
-  function compareTargetIdentity(target) {
-    const normalized = normalizeCompareFileTarget(target);
-    if (!normalized) return '';
-    return `${normalized.fileId}|${normalized.key1Byte ?? ''}|${normalized.key2Byte ?? ''}`;
   }
 
   function addCompareDatasetTarget(targets, candidate, activeTarget) {
@@ -267,118 +328,14 @@
     return compareFileTargets;
   }
 
-  function compareTargetLabelName(target, displayNameCounts, displayNameSeen) {
-    const displayName = target.displayName;
-    if ((displayNameCounts.get(displayName) || 0) <= 1) return displayName;
-    const seen = displayNameSeen.get(displayName) || 0;
-    displayNameSeen.set(displayName, seen + 1);
-    if (seen === 0) return displayName;
-    const suffix = target.sourceSha256
-      ? target.sourceSha256.slice(0, 8)
-      : String(target.storeName || target.fileId || '').slice(0, 12);
-    return suffix ? `${displayName} [${suffix}]` : displayName;
-  }
-
-  function rawCompareSource(target, labelName = target.displayName) {
-    const sourceId = compareSourceId(target.fileId, 'raw');
-    return {
-      role: null,
-      id: 'raw',
-      sourceId,
-      fileId: target.fileId,
-      fileName: target.displayName,
-      key1Byte: target.key1Byte,
-      key2Byte: target.key2Byte,
-      layerId: 'raw',
-      label: `${labelName} / raw`,
-      pipelineKey: null,
-      tapLabel: null,
-      domain: 'amplitude',
-      available: true,
-    };
-  }
-
-  function tapCompareSource(target, tapLabel, options = {}) {
-    const sourceId = compareSourceId(target.fileId, 'tap', tapLabel);
-    return {
-      role: null,
-      id: tapLabel,
-      sourceId,
-      fileId: target.fileId,
-      fileName: target.displayName,
-      key1Byte: target.key1Byte,
-      key2Byte: target.key2Byte,
-      layerId: tapLabel,
-      label: `${target.displayName} / ${tapLabel}`,
-      pipelineKey: options.latestPipelineKey || null,
-      tapLabel,
-      domain: resolveSourceDomain(tapLabel, options.latestTapData),
-      available: !!options.latestPipelineKey,
-    };
-  }
-
-  function buildCompareSourceCatalog(targets, options = {}) {
-    const catalog = [];
-    const seen = new Set();
-    const layerValues = Array.isArray(options.layerValues) ? options.layerValues : ['raw'];
-    const normalizedTargets = (targets || [])
-      .map(normalizeCompareFileTarget)
-      .filter(Boolean);
-    const displayNameCounts = new Map();
-    for (const target of normalizedTargets) {
-      displayNameCounts.set(target.displayName, (displayNameCounts.get(target.displayName) || 0) + 1);
-    }
-    const displayNameSeen = new Map();
-    for (const target of normalizedTargets) {
-      if (!target || seen.has(target.fileId)) continue;
-      seen.add(target.fileId);
-      const labelName = compareTargetLabelName(target, displayNameCounts, displayNameSeen);
-      catalog.push(rawCompareSource(target, labelName));
-      if (!target.isActive) continue;
-      for (const layer of layerValues) {
-        const tapLabel = String(layer || '').trim();
-        if (!tapLabel || tapLabel === 'raw') continue;
-        catalog.push(tapCompareSource(target, tapLabel, options));
-      }
-    }
-    return catalog;
-  }
-
   function currentCompareSourceCatalog() {
-    return buildCompareSourceCatalog(syncCompareTargetsWithActive(), {
-      layerValues: getLayerSourceOptions(),
+    return buildCompareSourceCatalog({
+      targets: syncCompareTargetsWithActive(),
+      layerOptions: getLayerSourceOptions(),
+      activeFileId: window.currentFileId || '',
       latestPipelineKey: window.latestPipelineKey || null,
       latestTapData: window.latestTapData || {},
     });
-  }
-
-  function normalizeRecentDataset(candidate) {
-    if (!candidate || typeof candidate !== 'object') return null;
-    const originalName = String(candidate.original_name ?? candidate.originalName ?? '').trim();
-    if (!originalName) return null;
-    const storeName = String(candidate.store_name ?? candidate.storeName ?? '').trim();
-    const sourceSha256 = String(candidate.source_sha256 ?? candidate.sourceSha256 ?? '').trim();
-    const key1Byte = Number(candidate.key1_byte ?? candidate.key1Byte);
-    const key2Byte = Number(candidate.key2_byte ?? candidate.key2Byte);
-    if (!Number.isFinite(key1Byte) || !Number.isFinite(key2Byte)) return null;
-    return {
-      originalName,
-      storeName,
-      sourceSha256,
-      key1Byte,
-      key2Byte,
-    };
-  }
-
-  function compareRecentDatasetValue(candidate) {
-    const dataset = normalizeRecentDataset(candidate);
-    if (!dataset) return '';
-    const prefix = dataset.storeName ? `store:${encodeURIComponent(dataset.storeName)}` : `name:${encodeURIComponent(dataset.originalName)}`;
-    return [
-      prefix,
-      dataset.key1Byte,
-      dataset.key2Byte,
-    ].join('|');
   }
 
   function resolveCompareRecentDataset(datasets, selectedValue) {
@@ -474,20 +431,9 @@
     renderCompareDatasetList();
   }
 
-  function resolveSourceDomain(sourceId, tapDataByLabel = window.latestTapData) {
-    if (!sourceId || sourceId === 'raw') return 'amplitude';
-    const tapData = tapDataByLabel && tapDataByLabel[sourceId];
-    if (tapData && typeof tapData === 'object') {
-      const meta = tapData.meta;
-      if (meta && typeof meta.domain === 'string') return meta.domain;
-      if (Object.prototype.hasOwnProperty.call(tapData, 'prob')) return 'probability';
-    }
-    const lowered = String(sourceId).toLowerCase();
-    if (lowered.includes('fbpick') || lowered.includes('prob')) return 'probability';
-    return 'amplitude';
-  }
-
-  function resolveCompareSource(select, role) {
+  function getCompareSources() {
+    updateCompareSourceOptions();
+    const { sourceA, sourceB } = getCompareNodes();
     const catalog = currentCompareSourceCatalog();
     const activeRaw = catalog.find((source) => source.layerId === 'raw') || rawCompareSource({
       fileId: window.currentFileId || '',
@@ -496,17 +442,9 @@
       key2Byte: window.currentKey2Byte ?? null,
       isActive: true,
     });
-    const value = select?.value || activeRaw.sourceId;
-    const source = catalog.find((entry) => entry.sourceId === value) || activeRaw;
-    return { ...source, role };
-  }
-
-  function getCompareSources() {
-    updateCompareSourceOptions();
-    const { sourceA, sourceB } = getCompareNodes();
     return {
-      a: resolveCompareSource(sourceA, 'A'),
-      b: resolveCompareSource(sourceB, 'B'),
+      a: { ...(resolveCompareSource(catalog, sourceA?.value) || activeRaw), role: 'A' },
+      b: { ...(resolveCompareSource(catalog, sourceB?.value) || activeRaw), role: 'B' },
     };
   }
 
@@ -516,48 +454,8 @@
     return Array.isArray(key1Values) ? key1Values[idx] : undefined;
   }
 
-  function sourcePairKey(sources) {
-    return [
-      sources.a.fileId || '',
-      sources.a.layerId || sources.a.id || '',
-      sources.a.pipelineKey || '',
-      sources.a.tapLabel || '',
-      sources.b.fileId || '',
-      sources.b.layerId || sources.b.id || '',
-      sources.b.pipelineKey || '',
-      sources.b.tapLabel || '',
-    ].join('|');
-  }
-
   function canAttemptDiff(sources) {
     return sources.a.domain === sources.b.domain;
-  }
-
-  function isRawCompareSource(source) {
-    return (source?.layerId || source?.id || '') === 'raw';
-  }
-
-  function resolveCompareNormalizationFileId(source, referenceSource, fallbackFileId = null) {
-    if (!isRawCompareSource(source) || !isRawCompareSource(referenceSource)) return null;
-    const fileId = String(referenceSource?.fileId || source?.fileId || fallbackFileId || '').trim();
-    return fileId || null;
-  }
-
-  function shouldValidateRawCompareSources(sources) {
-    return isRawCompareSource(sources?.a)
-      && isRawCompareSource(sources?.b)
-      && !!sources.a.fileId
-      && !!sources.b.fileId
-      && sources.a.fileId !== sources.b.fileId;
-  }
-
-  function rawCompareValidationKey(sources, key1Byte, key2Byte) {
-    return [
-      sources.a.fileId,
-      sources.b.fileId,
-      key1Byte,
-      key2Byte,
-    ].map((value) => encodeURIComponent(String(value ?? ''))).join('|');
   }
 
   async function readCompareResponseDetail(response) {
@@ -704,7 +602,7 @@
       tapLabel,
       referencePipelineKey,
       referenceTapLabel,
-      normalizationFileId: resolveCompareNormalizationFileId(source, referenceSource, fileId),
+      normalizationFileId: resolveCompareNormalizationFileId(referenceSource, source, fileId),
       scaling: currentScaling,
       transpose: '1',
       mode: decision.mode,
@@ -920,357 +818,49 @@
     return payload;
   }
 
-  function payloadDt(payload) {
-    const dt = Number(payload?.dt);
-    if (Number.isFinite(dt) && dt > 0) return dt;
-    const fallback = Number(window.defaultDt ?? defaultDt);
-    return Number.isFinite(fallback) && fallback > 0 ? fallback : null;
+  function currentCompareGain() {
+    return parseFloat(document.getElementById('gain')?.value) || 1.0;
   }
 
-  function payloadShapeInfo(payload) {
-    if (!payload || !Array.isArray(payload.shape) || payload.shape.length !== 2) return null;
-    const rows = Number(payload.shape[0]);
-    const cols = Number(payload.shape[1]);
-    if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows <= 0 || cols <= 0) return null;
-    return { rows, cols, total: rows * cols };
+  function buildComparePanelsForCurrentState(render) {
+    return buildComparePanelModels({
+      render,
+      showDiff: compareShowDiffEnabled(),
+    });
   }
 
-  function payloadInvScale(payload) {
-    const payloadScale = Number(payload?.scale);
-    const quantScale = Number(payload?.quant?.scale);
-    const scale = Number.isFinite(payloadScale) && payloadScale !== 0
-      ? payloadScale
-      : quantScale;
-    return Number.isFinite(scale) && scale !== 0 ? 1 / scale : 1;
-  }
-
-  function payloadHasComputeValues(payload) {
-    const shape = payloadShapeInfo(payload);
-    if (!shape) return false;
-    return (
-      (payload.valuesI8 instanceof Int8Array && payload.valuesI8.length >= shape.total) ||
-      (payload.values instanceof Float32Array && payload.values.length >= shape.total)
-    );
-  }
-
-  function canUseCachedComparePayload(payload, source) {
-    if (source?.domain !== 'probability') return true;
-    return payloadHasComputeValues(payload);
-  }
-
-  function sourceDomain(options) {
-    if (typeof options === 'string') return options;
-    return options?.domain || '';
-  }
-
-  function payloadToF32(payload, options = {}) {
-    const shape = payloadShapeInfo(payload);
-    if (!shape) return null;
-    const { rows, cols, total } = shape;
-    let out = null;
-    if (payload.valuesI8 instanceof Int8Array && payload.valuesI8.length >= total) {
-      const invScale = payloadInvScale(payload);
-      out = new Float32Array(total);
-      for (let i = 0; i < total; i++) out[i] = payload.valuesI8[i] * invScale;
-    } else if (payload.values instanceof Float32Array && payload.values.length >= total) {
-      out = new Float32Array(payload.values.subarray(0, total));
-    } else if (sourceDomain(options) === 'probability') {
-      return null;
-    } else if (payload.zBacking instanceof Float32Array && payload.zBacking.length >= total) {
-      out = new Float32Array(payload.zBacking.subarray(0, total));
-    } else if (Array.isArray(payload.zRows) && payload.zRows.length === rows) {
-      out = new Float32Array(total);
-      for (let r = 0; r < rows; r++) {
-        const row = payload.zRows[r];
-        if (!row || row.length < cols) return null;
-        out.set(row.subarray ? row.subarray(0, cols) : Array.from(row).slice(0, cols), r * cols);
-      }
-    }
-    return out;
-  }
-
-  function sameShape(a, b) {
-    return Array.isArray(a?.shape) && Array.isArray(b?.shape) &&
-      a.shape.length === 2 && b.shape.length === 2 &&
-      Number(a.shape[0]) === Number(b.shape[0]) &&
-      Number(a.shape[1]) === Number(b.shape[1]);
-  }
-
-  function sameGrid(a, b) {
-    return ['x0', 'x1', 'y0', 'y1', 'stepX', 'stepY'].every((key) => Number(a?.[key]) === Number(b?.[key]));
-  }
-
-  function validateComparePair(a, b, sources) {
-    if (!sameShape(a, b)) return { ok: false, reason: 'shape', message: 'A-B unavailable: source shapes are different.' };
-    const dtA = payloadDt(a);
-    const dtB = payloadDt(b);
-    if (!(Number.isFinite(dtA) && Number.isFinite(dtB)) || Math.abs(dtA - dtB) > 1e-9) {
-      return { ok: false, reason: 'dt', message: 'A-B unavailable: source sample intervals are different.' };
-    }
-    if (!sameGrid(a, b)) return { ok: false, reason: 'grid', message: 'A-B unavailable: source grids are different.' };
-    if (sources.a.domain !== sources.b.domain) {
-      return { ok: false, reason: 'domain', message: 'A-B unavailable: source domains are different.' };
-    }
-    return { ok: true, reason: '', message: '' };
-  }
-
-  function subtractF32(a, b) {
-    if (!(a instanceof Float32Array) || !(b instanceof Float32Array) || a.length !== b.length) return null;
-    const out = new Float32Array(a.length);
-    for (let i = 0; i < a.length; i++) out[i] = a[i] - b[i];
-    return out;
-  }
-
-  function rowsFromF32(values, rows, cols) {
-    const out = new Array(rows);
-    for (let r = 0; r < rows; r++) out[r] = values.subarray(r * cols, (r + 1) * cols);
-    return out;
-  }
-
-  function axisSuffix(index) {
-    return index === 0 ? '' : String(index + 1);
-  }
-
-  function axisRef(base, index) {
-    return index === 0 ? base : `${base}${index + 1}`;
-  }
-
-  function axisLayoutName(base, index) {
-    return `${base}axis${axisSuffix(index)}`;
-  }
-
-  function compareDomains(count) {
-    const gapTotal = AXIS_MARGIN * Math.max(0, count - 1);
-    const panelWidth = (1 - gapTotal) / count;
-    const domains = [];
-    let start = 0;
-    for (let i = 0; i < count; i++) {
-      const end = i === count - 1 ? 1 : start + panelWidth;
-      domains.push([start, end]);
-      start = end + AXIS_MARGIN;
-    }
-    return domains;
-  }
-
-  function panelTitle(panel) {
-    if (panel.kind === 'diff') return `A-B: ${panel.left} - ${panel.right}`;
-    return `${panel.role}: ${panel.label}`;
-  }
-
-  function buildCompareLayout(render, panels, xRange, yRange) {
-    const domains = compareDomains(panels.length);
-    const dt = Number(payloadDt(render.a.payload)) || Number(window.defaultDt ?? defaultDt) || 0;
-    const yDefault = [(render.windowInfo.y1 * dt), (render.windowInfo.y0 * dt)];
-    const layout = {
+  function buildCompareLayoutForCurrentState(render, panels, xRange, yRange) {
+    return buildCompareLayout({
+      render,
+      panels,
+      xRange,
+      yRange,
       clickmode: clickModeForCurrentState(),
       dragmode: effectiveDragMode(),
-      uirevision: `${currentUiRevision()}:compare:${sourcePairKey(render.sources)}`,
-      paper_bgcolor: '#fff',
-      plot_bgcolor: '#fff',
-      margin: { t: 38, r: 12, l: 58, b: 42 },
-      annotations: [],
-      showlegend: false,
-    };
-    for (let i = 0; i < panels.length; i++) {
-      const xName = axisLayoutName('x', i);
-      const yName = axisLayoutName('y', i);
-      layout[xName] = {
-        domain: domains[i],
-        title: 'Trace',
-        showgrid: false,
-        tickfont: { color: '#000' },
-        titlefont: { color: '#000' },
-        autorange: false,
-        range: xRange || [render.windowInfo.x0, render.windowInfo.x1],
-      };
-      layout[yName] = {
-        domain: [0, 1],
-        title: i === 0 ? 'Time (s)' : '',
-        showgrid: false,
-        tickfont: { color: '#000' },
-        titlefont: { color: '#000' },
-        autorange: false,
-        range: yRange || yDefault,
-      };
-      layout.annotations.push({
-        xref: 'paper',
-        yref: 'paper',
-        x: (domains[i][0] + domains[i][1]) / 2,
-        y: 1.06,
-        xanchor: 'center',
-        yanchor: 'bottom',
-        showarrow: false,
-        text: panelTitle(panels[i]),
-        font: { size: 13, color: '#111827' },
-      });
-    }
-    return layout;
+      uiRevision: currentUiRevision(),
+    });
   }
 
-  function buildCompareWiggleTraces(panel, axisIndex, render) {
-    const { rows, cols, x0, stepX, y0, stepY } = render;
-    const values = panel.values;
-    const dt = Number(payloadDt(render.a.payload)) || Number(window.defaultDt ?? defaultDt) || 0;
-    const gain = parseFloat(document.getElementById('gain')?.value) || 1.0;
-    const lineSegLen = rows + 1;
-    const fillSegLen = (2 * rows) + 2;
-    const baseX = new Float32Array(cols * lineSegLen);
-    const baseY = new Float32Array(cols * lineSegLen);
-    const lineX = new Float32Array(cols * lineSegLen);
-    const lineY = new Float32Array(cols * lineSegLen);
-    const fillX = new Float32Array(cols * fillSegLen);
-    const fillY = new Float32Array(cols * fillSegLen);
-    for (let c = 0; c < cols; c++) {
-      const traceIndex = x0 + c * stepX;
-      const lineStart = c * lineSegLen;
-      const fillStart = c * fillSegLen;
-      for (let r = 0; r < rows; r++) {
-        const t = (y0 + r * stepY) * dt;
-        const idx = r * cols + c;
-        let val = values[idx] * gain;
-        if (val > AMP_LIMIT) val = AMP_LIMIT;
-        if (val < -AMP_LIMIT) val = -AMP_LIMIT;
-        const posVal = val < 0 ? 0 : val;
-        const lineIdx = lineStart + r;
-        const fillBaseIdx = fillStart + r;
-        const fillPosIdx = fillStart + rows + (rows - 1 - r);
-        baseX[lineIdx] = traceIndex;
-        baseY[lineIdx] = t;
-        lineX[lineIdx] = traceIndex + val;
-        lineY[lineIdx] = t;
-        fillX[fillBaseIdx] = traceIndex;
-        fillY[fillBaseIdx] = t;
-        fillX[fillPosIdx] = traceIndex + posVal;
-        fillY[fillPosIdx] = t;
-      }
-      const lineNanIdx = lineStart + rows;
-      baseX[lineNanIdx] = NaN;
-      baseY[lineNanIdx] = NaN;
-      lineX[lineNanIdx] = NaN;
-      lineY[lineNanIdx] = NaN;
-      const fillCloseIdx = fillStart + (2 * rows);
-      const fillNanIdx = fillCloseIdx + 1;
-      fillX[fillCloseIdx] = traceIndex;
-      fillY[fillCloseIdx] = (y0 * dt);
-      fillX[fillNanIdx] = NaN;
-      fillY[fillNanIdx] = NaN;
-    }
-    const xaxis = axisRef('x', axisIndex);
-    const yaxis = axisRef('y', axisIndex);
-    return [
-      {
-        type: 'scatter',
-        mode: 'lines',
-        x: baseX,
-        y: baseY,
-        xaxis,
-        yaxis,
-        line: { width: 0 },
-        connectgaps: false,
-        hoverinfo: 'skip',
-        showlegend: false,
-      },
-      {
-        type: 'scatter',
-        mode: 'lines',
-        x: fillX,
-        y: fillY,
-        xaxis,
-        yaxis,
-        fill: 'toself',
-        fillcolor: 'black',
-        line: { width: 0 },
-        opacity: 0.6,
-        connectgaps: false,
-        hoverinfo: 'skip',
-        showlegend: false,
-      },
-      {
-        type: 'scatter',
-        mode: 'lines',
-        x: lineX,
-        y: lineY,
-        xaxis,
-        yaxis,
-        line: { color: 'black', width: 0.5 },
-        connectgaps: false,
-        hoverinfo: 'x+y',
-        showlegend: false,
-      },
-    ];
+  function buildCompareWiggleTracesForCurrentState(panel, axisIndex, render) {
+    return buildCompareWiggleTraces({
+      panel,
+      axisIndex,
+      render,
+      gain: currentCompareGain(),
+    });
   }
 
-  function buildCompareHeatmapTrace(panel, axisIndex, render) {
-    const { rows, cols, x0, stepX, y0, stepY } = render;
-    const xVals = new Float32Array(cols);
-    for (let c = 0; c < cols; c++) xVals[c] = x0 + c * stepX;
-    const dt = Number(payloadDt(render.a.payload)) || Number(window.defaultDt ?? defaultDt) || 0;
-    const yVals = new Float32Array(rows);
-    for (let r = 0; r < rows; r++) yVals[r] = (y0 + r * stepY) * dt;
-    const gain = parseFloat(document.getElementById('gain')?.value) || 1.0;
-    const cmName = document.getElementById('colormap')?.value || 'Greys';
-    const reverse = !!document.getElementById('cmReverse')?.checked;
-    const cm = (window.COLORMAPS && window.COLORMAPS[cmName]) || 'Greys';
-    const scale = compareHeatmapScale(panel, gain);
-    const isDiv = scale.signed && (cmName === 'RdBu' || cmName === 'BWR');
-    return {
-      type: 'heatmap',
-      x: xVals,
-      y: yVals,
-      z: rowsFromF32(panel.values, rows, cols),
-      xaxis: axisRef('x', axisIndex),
-      yaxis: axisRef('y', axisIndex),
-      colorscale: cm,
-      reversescale: reverse,
-      zmin: scale.zmin,
-      zmax: scale.zmax,
-      zmid: isDiv ? 0 : null,
-      showscale: false,
-      hoverinfo: 'x+y',
-      hovertemplate: '',
-    };
-  }
-
-  function compareHeatmapScale(panel, gain) {
-    const g = Math.max(Number(gain) || 1.0, 1e-9);
-    if (panel?.kind === 'source' && panel.domain === 'probability') {
-      return { zmin: 0, zmax: 1 / g, signed: false };
-    }
-    if (panel?.kind === 'diff' && panel.domain === 'probability') {
-      return { zmin: -1 / g, zmax: 1 / g, signed: true };
-    }
-    return { zmin: -AMP_LIMIT / g, zmax: AMP_LIMIT / g, signed: true };
-  }
-
-  function buildComparePanels(render) {
-    const panels = [
-      {
-        kind: 'source',
-        role: 'A',
-        domain: render.sources.a.domain,
-        label: render.sources.a.label,
-        values: render.a.values,
-      },
-      {
-        kind: 'source',
-        role: 'B',
-        domain: render.sources.b.domain,
-        label: render.sources.b.label,
-        values: render.b.values,
-      },
-    ];
-    if (compareShowDiffEnabled() && render.diffAvailable && render.diffValues) {
-      panels.push({
-        kind: 'diff',
-        role: 'A-B',
-        domain: render.sources.a.domain,
-        label: `${render.sources.a.label} - ${render.sources.b.label}`,
-        left: render.sources.a.label,
-        right: render.sources.b.label,
-        values: render.diffValues,
-      });
-    }
-    return panels;
+  function buildCompareHeatmapTraceForCurrentState(panel, axisIndex, render) {
+    const colormapName = document.getElementById('colormap')?.value || 'Greys';
+    return buildCompareHeatmapTrace({
+      panel,
+      axisIndex,
+      render,
+      gain: currentCompareGain(),
+      colormapName,
+      reverse: !!document.getElementById('cmReverse')?.checked,
+      colormaps: window.COLORMAPS,
+    });
   }
 
   function renderCompareLatestView() {
@@ -1292,7 +882,7 @@
 
     const plotDiv = document.getElementById('plot');
     if (!plotDiv) return false;
-    const panels = buildComparePanels(render);
+    const panels = buildComparePanelsForCurrentState(render);
     if (
       Number.isInteger(render.__requestId) &&
       !isCompareRequestCurrent(render.__requestId)
@@ -1310,10 +900,10 @@
     const yRange = savedYRange || null;
     const traces = [];
     for (let i = 0; i < panels.length; i++) {
-      if (render.mode === 'wiggle') traces.push(...buildCompareWiggleTraces(panels[i], i, render));
-      else traces.push(buildCompareHeatmapTrace(panels[i], i, render));
+      if (render.mode === 'wiggle') traces.push(...buildCompareWiggleTracesForCurrentState(panels[i], i, render));
+      else traces.push(buildCompareHeatmapTraceForCurrentState(panels[i], i, render));
     }
-    const layout = buildCompareLayout(render, panels, xRange, yRange);
+    const layout = buildCompareLayoutForCurrentState(render, panels, xRange, yRange);
     if (
       Number.isInteger(render.__requestId) &&
       !isCompareRequestCurrent(render.__requestId)
@@ -1393,27 +983,12 @@
       return false;
     }
 
-    const layout = {
-      margin: { t: 38, r: 12, l: 58, b: 42 },
-      annotations: [{
-        xref: 'paper',
-        yref: 'paper',
-        x: 0.5,
-        y: 0.5,
-        text,
-        showarrow: false,
-        font: { size: 14 },
-      }],
-      xaxis: { visible: false },
-      yaxis: { visible: false },
-    };
+    const figure = buildCompareUnavailableFigure(text);
 
     const startRender = () => {
-      return withCompareSuppressedRelayout(window.Plotly.react(plotDiv, [], layout, {
-        responsive: true,
-        doubleClick: false,
-        doubleClickDelay: 300,
-      }));
+      return withCompareSuppressedRelayout(
+        window.Plotly.react(plotDiv, figure.data, figure.layout, figure.config),
+      );
     };
     const renderData = Number.isInteger(requestId)
       ? { __requestSlot: COMPARE_RENDER_SLOT, __requestId: requestId }
@@ -1454,37 +1029,15 @@
   }
 
   function buildCompareRender(aPayload, bPayload, sources, decision, validation, windowInfo) {
-    const aValues = payloadToF32(aPayload, sources.a);
-    const bValues = payloadToF32(bPayload, sources.b);
-    if (!aValues || !bValues) {
-      return null;
-    }
-    const rows = Number(aPayload.shape[0]);
-    const cols = Number(aPayload.shape[1]);
-    const diffValues = validation.ok ? subtractF32(aValues, bValues) : null;
-    return {
-      key1: aPayload.key1,
+    return buildCompareRenderModel({
+      aPayload,
+      bPayload,
       sources,
-      sourcePair: sourcePairKey(sources),
-      scaling: currentScaling,
-      lmoKey: aPayload.lmoKey,
-      mode: decision.mode,
-      panelCount: decision.panelCount,
-      stepX: decision.stepX,
-      stepY: decision.stepY,
-      x0: aPayload.x0,
-      x1: aPayload.x1,
-      y0: aPayload.y0,
-      y1: aPayload.y1,
-      rows,
-      cols,
+      decision,
+      validation,
       windowInfo,
-      a: { payload: aPayload, values: aValues },
-      b: { payload: bPayload, values: bValues },
-      diffAvailable: validation.ok && !!diffValues,
-      diffMessage: validation.message,
-      diffValues,
-    };
+      scaling: currentScaling,
+    });
   }
 
   function compareUnavailableMessage(sources) {
@@ -1852,14 +1405,22 @@
     validateComparePair,
     subtractF32,
     payloadToF32,
+    activeCompareFileTarget: compareSources.activeCompareFileTarget,
+    compareTargetLabelName: compareSources.compareTargetLabelName,
+    rawCompareSource,
+    tapCompareSource: compareSources.tapCompareSource,
+    buildCompareSourceCatalog,
     resolveSourceDomain,
+    resolveCompareSource,
     sourcePairKey,
+    isRawCompareSource,
     normalizeCompareFileTarget,
     compareTargetDatasetKey,
     normalizeRecentDataset,
     compareRecentDatasetValue,
     resolveCompareRecentDataset,
     resolveCompareNormalizationFileId,
+    shouldValidateRawCompareSources,
     rawCompareValidationKey,
     validateRawCompareSources,
     ensureRawCompareReferenceBaseline,
@@ -1884,9 +1445,11 @@
     addCompareDatasetTarget,
     clearCompareDatasetTargets,
     resetCompareTargetsForActive,
-    buildCompareSourceCatalog,
     compareHeatmapScale,
-    buildComparePanels,
+    buildComparePanels: buildComparePanelsForCurrentState,
+    buildCompareLayout: buildCompareLayoutForCurrentState,
+    buildCompareWiggleTraces: buildCompareWiggleTracesForCurrentState,
+    buildCompareHeatmapTrace: buildCompareHeatmapTraceForCurrentState,
     initCompareControls,
   };
 
