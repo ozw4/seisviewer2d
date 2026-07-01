@@ -372,11 +372,14 @@ def test_get_section_window_bin_step_less_than_one_is_422(tmp_path: Path):
 
 def test_get_section_window_bin_value_error_maps_to_400(monkeypatch, tmp_path: Path):
     # Ensure any ValueError from the service layer becomes a stable 400 response.
-    def _raise_value_error(**_k):  # noqa: ANN001
+    def _raise_value_error(_window_request, **_k):  # noqa: ANN001
         raise ValueError('Requested window is empty')
 
     monkeypatch.setattr(
-        sec, 'build_section_window_payload', _raise_value_error, raising=True
+        sec,
+        'build_section_window_payload_for_request',
+        _raise_value_error,
+        raising=True,
     )
     app.state.sv.file_registry.set_record('f', {'store_path': str(tmp_path)})
     write_baseline_raw(tmp_path, key1=7, n_traces=1)
