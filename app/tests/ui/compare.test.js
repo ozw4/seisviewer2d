@@ -215,6 +215,47 @@ test('compare heatmap uses signed amplitude scale for amplitude diff values', ()
   });
 });
 
+test('legacy compare render exports keep positional arguments', () => {
+  vi.stubGlobal('clickModeForCurrentState', vi.fn(() => 'event+select'));
+  vi.stubGlobal('effectiveDragMode', vi.fn(() => 'pan'));
+  vi.stubGlobal('currentUiRevision', vi.fn(() => 'ui-1'));
+
+  const render = {
+    sources: {
+      a: { fileId: 'line-a', layerId: 'raw', domain: 'amplitude', label: 'Line A' },
+      b: { fileId: 'line-b', layerId: 'raw', domain: 'amplitude', label: 'Line B' },
+    },
+    a: {
+      payload: { dt: 0.004 },
+      values: new Float32Array([1, 2, 3, 4]),
+    },
+    b: {
+      payload: { dt: 0.004 },
+      values: new Float32Array([0.5, 1, 1.5, 2]),
+    },
+    diffAvailable: true,
+    diffValues: new Float32Array([0.5, 1, 1.5, 2]),
+    rows: 2,
+    cols: 2,
+    x0: 10,
+    stepX: 1,
+    y0: 0,
+    stepY: 1,
+    windowInfo: { x0: 10, x1: 12, y0: 0, y1: 2 },
+  };
+  const panels = window.__svCompare.buildComparePanels(render);
+
+  const layout = window.__svCompare.buildCompareLayout(render, panels, [10, 12], [0.008, 0]);
+  const wiggleTraces = window.__svCompare.buildCompareWiggleTraces(panels[0], 0, render);
+  const heatmapTrace = window.__svCompare.buildCompareHeatmapTrace(panels[0], 1, render);
+
+  expect(layout.xaxis.range).toEqual([10, 12]);
+  expect(layout.yaxis.range).toEqual([0.008, 0]);
+  expect(wiggleTraces).toHaveLength(3);
+  expect(wiggleTraces[0].xaxis).toBe('x');
+  expect(heatmapTrace).toMatchObject({ type: 'heatmap', xaxis: 'x2', yaxis: 'y2' });
+});
+
 test('compare payload decode prefers quantized compute values over display backing', () => {
   const payload = {
     shape: [1, 2],

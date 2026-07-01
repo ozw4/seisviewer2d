@@ -1447,6 +1447,9 @@
     resetCompareTargetsForActive,
     compareHeatmapScale,
     buildComparePanels: buildComparePanelsForCurrentState,
+    buildCompareLayout: buildCompareLayoutForCurrentState,
+    buildCompareWiggleTraces: buildCompareWiggleTracesForCurrentState,
+    buildCompareHeatmapTrace: buildCompareHeatmapTraceForCurrentState,
     initCompareControls,
   };
 
