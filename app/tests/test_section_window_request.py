@@ -162,60 +162,104 @@ def test_payload_kwargs_scaling_mode_is_normalized_to_lowercase() -> None:
     assert kwargs['scaling_mode'] == 'tracewise'
 
 
-@pytest.mark.parametrize(
-    'overrides',
-    [
-        {},
-        {'normalization_file_id': 'file-b'},
-        {'pipeline_key': 'pipe', 'tap_label': 'fbpick'},
-        {'reference_pipeline_key': 'ref-pipe', 'reference_tap_label': 'raw'},
-        {
-            'lmo_enabled': True,
-            'lmo_velocity_mps': '1800',
-            'lmo_offset_byte': '41',
-            'lmo_offset_scale': '0.5',
-            'lmo_offset_mode': 'signed',
-            'lmo_ref_mode': 'trace',
-            'lmo_ref_trace': '7',
-            'lmo_polarity': '-1',
-        },
-    ],
-)
-def test_cache_key_matches_existing_section_router_helper(
-    overrides: dict[str, object],
-) -> None:
-    from app.api.routers import section as sec
-
-    req = _request(**overrides)
-
-    assert req.cache_key() == sec._build_window_section_cache_key(
-        file_id=req.file_id,
-        normalization_file_id=req.raw_normalization_file_id,
-        key1=req.key1,
-        key1_byte=req.key1_byte,
-        key2_byte=req.key2_byte,
-        offset_byte=req.offset_byte_for_payload,
-        x0=req.x0,
-        x1=req.x1,
-        y0=req.y0,
-        y1=req.y1,
-        step_x=req.step_x,
-        step_y=req.step_y,
-        transpose=req.transpose,
-        pipeline_key=req.pipeline_key,
-        tap_label=req.tap_label,
-        reference_pipeline_key=req.reference_pipeline_key,
-        reference_tap_label=req.reference_tap_label,
-        scaling_mode=req.scaling_mode,
-        lmo_enabled=req.lmo_enabled,
-        lmo_velocity_mps=req.lmo_velocity_mps,
-        lmo_offset_byte=req.lmo_offset_byte,
-        lmo_offset_scale=req.lmo_offset_scale,
-        lmo_offset_mode=req.lmo_offset_mode,
-        lmo_ref_mode=req.lmo_ref_mode,
-        lmo_ref_trace=req.lmo_ref_trace,
-        lmo_polarity=req.lmo_polarity,
+def test_cache_key_field_order_is_explicit_for_lmo_disabled() -> None:
+    request = _request(
+        file_id='B',
+        normalization_file_id='A',
+        key1=7,
+        x0=0,
+        x1=1,
+        y0=0,
+        y1=99,
+        step_x=1,
+        step_y=2,
+        transpose=False,
+        scaling='amax',
     )
+
+    assert request.cache_key() == (
+        'B',
+        'A',
+        7,
+        189,
+        193,
+        None,
+        0,
+        1,
+        0,
+        99,
+        1,
+        2,
+        False,
+        None,
+        None,
+        None,
+        None,
+        'amax',
+    )
+
+
+def test_cache_key_field_order_is_explicit_for_lmo_enabled() -> None:
+    request = _request(
+        file_id='B',
+        normalization_file_id='A',
+        key1=7,
+        x0=0,
+        x1=1,
+        y0=0,
+        y1=99,
+        step_x=1,
+        step_y=2,
+        transpose=False,
+        scaling='amax',
+        lmo_enabled=True,
+        lmo_velocity_mps='1800',
+        lmo_offset_byte='41',
+        lmo_offset_scale='0.5',
+        lmo_offset_mode='signed',
+        lmo_ref_mode='trace',
+        lmo_ref_trace='7',
+        lmo_polarity='-1',
+    )
+
+    assert request.cache_key() == (
+        'B',
+        'A',
+        7,
+        189,
+        193,
+        None,
+        0,
+        1,
+        0,
+        99,
+        1,
+        2,
+        False,
+        None,
+        None,
+        None,
+        None,
+        'amax',
+        'lmo',
+        True,
+        1800.0,
+        41,
+        0.5,
+        'signed',
+        'trace',
+        7,
+        -1,
+    )
+
+
+def test_cache_key_offset_model_reflects_forced_offset_byte() -> None:
+    request = _request(
+        offset_byte=41,
+        default_fbpick_model_id='fbpick_offset_edgenext_small.pt',
+    )
+
+    assert request.cache_key()[5] == DEFAULT_FIXED_OFFSET_BYTE
 
 
 def test_section_window_request_import_does_not_load_runtime_modules() -> None:
